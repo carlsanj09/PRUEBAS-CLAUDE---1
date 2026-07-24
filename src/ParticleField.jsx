@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ParticleSystem } from './particles/ParticleSystem'
+import { ParticleSystem, MAX_PARTICLES } from './particles/ParticleSystem'
 import { MicVolumeMeter } from './audio/MicVolumeMeter'
 
-const PARTICLE_COUNT = 1000
 const DEFAULT_SENSITIVITY = 3.5
 
 export default function ParticleField() {
@@ -10,6 +9,7 @@ export default function ParticleField() {
   const meterFillRef = useRef(null)
   const statusRef = useRef(null)
   const countRef = useRef(null)
+  const notesRef = useRef(null)
   const systemRef = useRef(null)
   const meterRef = useRef(null)
   const rafRef = useRef(null)
@@ -35,7 +35,7 @@ export default function ParticleField() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
       if (!systemRef.current) {
-        systemRef.current = new ParticleSystem(width, height, PARTICLE_COUNT)
+        systemRef.current = new ParticleSystem(width, height, MAX_PARTICLES)
       } else {
         systemRef.current.resize(width, height)
       }
@@ -46,8 +46,8 @@ export default function ParticleField() {
 
     const loop = () => {
       const volume = meterRef.current ? meterRef.current.getVolume() : 0
-      const peaks = meterRef.current ? meterRef.current.getSpectralPeaks() : []
-      const { soundActive, activeCount } = systemRef.current.step(volume, peaks)
+      const peaks = meterRef.current ? meterRef.current.getSpectralPeaks(3) : []
+      const { soundActive, activeCount, notes } = systemRef.current.step(volume, peaks)
       systemRef.current.draw(ctx, soundActive)
 
       if (meterFillRef.current) {
@@ -55,6 +55,9 @@ export default function ParticleField() {
       }
       if (countRef.current) {
         countRef.current.textContent = `${activeCount} partículas`
+      }
+      if (notesRef.current) {
+        notesRef.current.textContent = notes.length ? notes.join(' + ') : ''
       }
       if (statusRef.current) {
         statusRef.current.classList.toggle('on', soundActive)
@@ -112,6 +115,7 @@ export default function ParticleField() {
 
         <span ref={statusRef} className="status" />
         <span ref={countRef} className="count">1000 partículas</span>
+        <span ref={notesRef} className="notes" />
 
         <label className="sensitivity">
           Sensibilidad

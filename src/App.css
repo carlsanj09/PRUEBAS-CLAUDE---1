@@ -81,6 +81,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+.notes {
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .sensitivity {
   display: flex;
   align-items: center;
