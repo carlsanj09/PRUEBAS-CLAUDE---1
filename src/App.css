@@ -118,15 +118,11 @@
 
 .glow {
   position: absolute;
-  /* This composition is captured landscape but rotated 90deg clockwise
-     downstream (OBS) for a vertical 9:16 screen. The canvas's top edge
-     becomes the right edge after that rotation, so the glow is anchored
-     to the top here so it lands on the right in the final rotated view. */
-  inset: 0 0 70% 0;
+  inset: 0 0 0 70%;
   /* A linear fade (rather than radial) reaches exactly 0 at its far edge
      regardless of the box's aspect ratio, so there's no hard seam where it
      gets clipped by the container's overflow. */
-  background: linear-gradient(to bottom, var(--glow-color, var(--accent)) 0%, transparent 100%);
+  background: linear-gradient(to right, transparent 0%, var(--glow-color, var(--accent)) 100%);
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease-out;

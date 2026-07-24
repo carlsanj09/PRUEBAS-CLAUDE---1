@@ -49,11 +49,7 @@ const SPAWN_JITTER = 4
 const EXIT_FADE_SECONDS = 0.9
 
 // A faint ambient pull, so a subset of particles' organic drift leans
-// toward the composition's dominant side rather than staying perfectly
-// random. This is captured landscape but shown rotated 90deg clockwise
-// (OBS) for a vertical screen, so "the right side" in the final view is
-// this canvas's top edge — same convention as the glow and the plate
-// field's own orientation.
+// toward the right edge of the screen rather than staying perfectly random.
 const GRAVITY_STRENGTH = 0.0045
 const GRAVITY_CHANCE = 0.5 // only "some" particles feel it, not all
 
@@ -223,7 +219,7 @@ export class ParticleSystem {
       const r = p.baseR * this.sizeScale
       p.vx *= DRAG
       p.vy *= DRAG
-      if (p.gravity > 0) p.vy -= GRAVITY_STRENGTH * p.gravity
+      if (p.gravity > 0) p.vx += GRAVITY_STRENGTH * p.gravity
       p.x += p.vx * this.speedScale
       p.y += p.vy * this.speedScale
 
@@ -347,23 +343,16 @@ export class ParticleSystem {
     const eps = 0.01
 
     for (const p of this.activeParticles) {
-      // The canvas itself stays landscape, but this is captured for a
-      // vertical 9:16 screen and rotated 90° clockwise downstream (OBS) —
-      // so the field's own axes are pre-rotated 90° the other way here.
-      // What was the canvas's top edge becomes the right edge after that
-      // rotation, which is where the composition's weight belongs.
-      const nx = -(p.y - halfH) / halfH
-      const ny = (p.x - halfW) / halfW
+      const nx = (p.x - halfW) / halfW
+      const ny = (p.y - halfH) / halfH
 
       const z = this.#plateFieldAt(nx, ny)
       const gx = (this.#plateFieldAt(nx + eps, ny) - z) / eps
       const gy = (this.#plateFieldAt(nx, ny + eps) - z) / eps
 
-      // Pulls toward decreasing |z| (a nodal line). Forces are swapped back
-      // through the same 90° rotation (chain rule) so they push in the
-      // correct actual pixel direction rather than the field's own axes.
-      p.vx += -SETTLE_STRENGTH * z * gy * scale
-      p.vy += SETTLE_STRENGTH * z * gx * scale
+      // Pulls toward decreasing |z| (a nodal line), scaled to pixel space.
+      p.vx += -SETTLE_STRENGTH * z * gx * scale
+      p.vy += -SETTLE_STRENGTH * z * gy * scale
 
       // Shakes particles sitting on high-amplitude (antinode) zones, same as
       // real sand won't settle where the plate is still vibrating hard. The
