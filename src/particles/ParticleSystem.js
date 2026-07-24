@@ -331,16 +331,23 @@ export class ParticleSystem {
     const eps = 0.01
 
     for (const p of this.activeParticles) {
-      const nx = (p.x - halfW) / halfW
-      const ny = (p.y - halfH) / halfH
+      // The canvas itself stays landscape, but this is captured for a
+      // vertical 9:16 screen and rotated 90° clockwise downstream (OBS) —
+      // so the field's own axes are pre-rotated 90° the other way here.
+      // What was the canvas's top edge becomes the right edge after that
+      // rotation, which is where the composition's weight belongs.
+      const nx = -(p.y - halfH) / halfH
+      const ny = (p.x - halfW) / halfW
 
       const z = this.#plateFieldAt(nx, ny)
       const gx = (this.#plateFieldAt(nx + eps, ny) - z) / eps
       const gy = (this.#plateFieldAt(nx, ny + eps) - z) / eps
 
-      // Pulls toward decreasing |z| (a nodal line), scaled to pixel space.
-      p.vx += -SETTLE_STRENGTH * z * gx * scale
-      p.vy += -SETTLE_STRENGTH * z * gy * scale
+      // Pulls toward decreasing |z| (a nodal line). Forces are swapped back
+      // through the same 90° rotation (chain rule) so they push in the
+      // correct actual pixel direction rather than the field's own axes.
+      p.vx += -SETTLE_STRENGTH * z * gy * scale
+      p.vy += SETTLE_STRENGTH * z * gx * scale
 
       // Shakes particles sitting on high-amplitude (antinode) zones, same as
       // real sand won't settle where the plate is still vibrating hard. The
