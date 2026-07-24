@@ -3,19 +3,35 @@ const MAX_RADIUS_ADD = 1.8
 const IDLE_SPEED = 0.15
 const IDLE_DAMPING = 0.02
 const CELL_SIZE = 14
-const MAX_SPEED = 9
+const MAX_SPEED = 7
 
 // Hysteresis: enters "active" sooner than it exits, so a single loud
 // syllable doesn't cause the field to flicker on/off every frame.
 const ENTER_THRESHOLD = 0.012
 const EXIT_THRESHOLD = 0.006
 
-const JITTER_STRENGTH = 6 // kinetic energy injected per frame, proportional to volume
-const DRAG = 0.985 // friction so injected energy settles instead of accumulating forever
+const MAX_PARTICLES = 1000
+const MIN_PARTICLES = 500
+// Below this, particles thin out to MIN_PARTICLES (an octave below a guitar's
+// low E). At/above the guitar's high E they fill back up to MAX_PARTICLES.
+const COUNT_FREQ_MIN = 80
+const COUNT_FREQ_MAX = 329.63
+const COUNT_SMOOTH = 0.01 // slow ramp, so the count drifts rather than pops
 
-const ATTRACTOR_STRENGTH = 0.06
-const ATTRACTOR_MIN_RADIUS_FRAC = 0.1
-const ATTRACTOR_MAX_RADIUS_FRAC = 0.42
+// Chladni plate: nodal lines of cos(n*X)*cos(m*Y) - cos(m*X)*cos(n*Y) = 0.
+// Higher pitch -> higher mode numbers -> a more intricate figure.
+const MODE_FREQ_MIN = 70
+const MODE_FREQ_MAX = 2000
+const MODE_MIN = 2
+const MODE_MAX = 11
+const MODE_SMOOTH = 0.008 // slow morph between figures ("armonioso", not a jump cut
+const ORIENTATION_DRIFT = 0.0016 // constant slow plate rotation, so a held note doesn't freeze
+const HUE_SMOOTH = 0.012
+
+const SETTLE_STRENGTH = 0.0016 // pull toward nodal lines
+const AGITATION_STRENGTH = 5 // shake proportional to local vibration * volume
+const REPEL_STRENGTH = 0.6 // keeps grains from perfectly overlapping
+const DRAG = 0.97
 
 function randomVelocity(speed) {
   const angle = Math.random() * Math.PI * 2
@@ -23,27 +39,38 @@ function randomVelocity(speed) {
 }
 
 export class ParticleSystem {
-  constructor(width, height, count) {
+  constructor(width, height, maxCount = MAX_PARTICLES) {
     this.width = width
     this.height = height
-    this.particles = Array.from({ length: count }, () => this.#createParticle())
-    this.attractors = []
+    this.particles = Array.from({ length: maxCount }, () => this.#createParticle())
     this.active = false
     this.time = 0
+
+    this.angle = Math.random() * Math.PI * 2
+    this.modeM = 3
+    this.modeN = 4.5
+    this.targetModeM = 3
+    this.targetModeN = 4.5
+    this.hue = 220
+    this.targetHue = 220
+
+    this.activeCount = maxCount
+    this.targetCount = maxCount
+    this.currentActiveN = maxCount
   }
 
   #createParticle() {
     const r = MIN_RADIUS + Math.random() * MAX_RADIUS_ADD
     const { vx, vy } = randomVelocity(IDLE_SPEED)
-    return {
-      x: r + Math.random() * (this.width - 2 * r),
-      y: r + Math.random() * (this.height - 2 * r),
-      vx,
-      vy,
-      r,
-      mass: r * r,
-      tone: 0.5,
-    }
+    return { x: r + Math.random() * (this.width - 2 * r), y: r + Math.random() * (this.height - 2 * r), vx, vy, r }
+  }
+
+  #respawnParticle(p) {
+    p.x = p.r + Math.random() * (this.width - 2 * p.r)
+    p.y = p.r + Math.random() * (this.height - 2 * p.r)
+    const { vx, vy } = randomVelocity(IDLE_SPEED)
+    p.vx = vx
+    p.vy = vy
   }
 
   resize(width, height) {
@@ -55,7 +82,7 @@ export class ParticleSystem {
     }
   }
 
-  // `peaks`: [{ freqRatio: 0-1 (low->high pitch), magnitude: 0-1 }], strongest first.
+  // `peaks`: [{ hz, freqRatio: 0-1 (low->high, log-mapped), magnitude: 0-1 }], strongest first.
   step(volume, peaks = []) {
     this.time += 1 / 60
 
@@ -63,17 +90,28 @@ export class ParticleSystem {
     else if (volume < EXIT_THRESHOLD) this.active = false
     const soundActive = this.active
 
+    if (peaks[0]) this.#updateTargets(peaks[0])
+
+    // These keep drifting toward their targets even at rest, so the plate is
+    // never perfectly static and the next sound continues the morph smoothly.
+    this.angle += ORIENTATION_DRIFT
+    this.modeM += (this.targetModeM - this.modeM) * MODE_SMOOTH
+    this.modeN += (this.targetModeN - this.modeN) * MODE_SMOOTH
+    this.hue += (this.targetHue - this.hue) * HUE_SMOOTH
+    this.activeCount += (this.targetCount - this.activeCount) * COUNT_SMOOTH
+
+    const activeN = Math.max(MIN_PARTICLES, Math.min(MAX_PARTICLES, Math.round(this.activeCount)))
+    this.#syncActiveCount(activeN)
+
     if (soundActive) {
-      this.#updateAttractors(peaks)
-      this.#injectEnergy(volume)
-      this.#applyAttraction(volume)
-      this.#resolveCollisions()
+      this.#applyPlateForces(volume)
+      this.#resolveOverlaps()
     } else {
-      this.attractors = []
       this.#dampToIdle()
     }
 
-    for (const p of this.particles) {
+    for (let i = 0; i < this.currentActiveN; i++) {
+      const p = this.particles[i]
       p.vx *= DRAG
       p.vy *= DRAG
       p.x += p.vx
@@ -98,11 +136,48 @@ export class ParticleSystem {
 
     this.#clampSpeeds()
 
-    return { soundActive, volume }
+    return { soundActive, volume, activeCount: this.currentActiveN }
+  }
+
+  #updateTargets(peak) {
+    const hz = peak.hz
+
+    const countT =
+      hz <= COUNT_FREQ_MIN
+        ? 0
+        : Math.min(
+            1,
+            (Math.log2(Math.max(hz, COUNT_FREQ_MIN)) - Math.log2(COUNT_FREQ_MIN)) /
+              (Math.log2(COUNT_FREQ_MAX) - Math.log2(COUNT_FREQ_MIN)),
+          )
+    this.targetCount = MIN_PARTICLES + countT * (MAX_PARTICLES - MIN_PARTICLES)
+
+    const modeT = Math.min(
+      1,
+      Math.max(0, (Math.log2(Math.max(hz, MODE_FREQ_MIN)) - Math.log2(MODE_FREQ_MIN)) / (Math.log2(MODE_FREQ_MAX) - Math.log2(MODE_FREQ_MIN))),
+    )
+    this.targetModeM = MODE_MIN + modeT * (MODE_MAX - MODE_MIN)
+
+    // A slow, deterministic wander (sum of incommensurate sines) so the same
+    // pitch doesn't always draw the exact same figure, without ever jumping.
+    const wobble = Math.sin(this.time * 0.083) * 1.4 + Math.sin(this.time * 0.031 + 2) * 1.1
+    this.targetModeN = this.targetModeM + 1.7 + wobble
+
+    this.targetHue = 20 + peak.freqRatio * 240
+  }
+
+  #syncActiveCount(activeN) {
+    if (activeN > this.currentActiveN) {
+      for (let i = this.currentActiveN; i < activeN; i++) {
+        this.#respawnParticle(this.particles[i])
+      }
+    }
+    this.currentActiveN = activeN
   }
 
   #dampToIdle() {
-    for (const p of this.particles) {
+    for (let i = 0; i < this.currentActiveN; i++) {
+      const p = this.particles[i]
       const speed = Math.hypot(p.vx, p.vy)
       if (speed < 0.0001) continue
       const nextSpeed = speed + (IDLE_SPEED - speed) * IDLE_DAMPING
@@ -111,63 +186,47 @@ export class ParticleSystem {
     }
   }
 
-  #injectEnergy(volume) {
-    const jitter = Math.min(volume, 1) * JITTER_STRENGTH
-    for (const p of this.particles) {
-      p.vx += (Math.random() - 0.5) * jitter
-      p.vy += (Math.random() - 0.5) * jitter
-    }
+  #plateZ(nx, ny) {
+    const rx = nx * Math.cos(this.angle) - ny * Math.sin(this.angle)
+    const ry = nx * Math.sin(this.angle) + ny * Math.cos(this.angle)
+    const X = rx * Math.PI
+    const Y = ry * Math.PI
+    const m = this.modeM
+    const n = this.modeN
+    return Math.cos(n * X) * Math.cos(m * Y) - Math.cos(m * X) * Math.cos(n * Y)
   }
 
-  #updateAttractors(peaks) {
-    const cx = this.width / 2
-    const cy = this.height / 2
-    const maxR = Math.min(this.width, this.height) / 2
-
-    this.attractors = peaks.map((peak, i) => {
-      const angle = peak.freqRatio * Math.PI * 2 + this.time * 0.15 + i * 1.3
-      const radius =
-        maxR * (ATTRACTOR_MIN_RADIUS_FRAC + peak.magnitude * (ATTRACTOR_MAX_RADIUS_FRAC - ATTRACTOR_MIN_RADIUS_FRAC))
-      return {
-        x: cx + Math.cos(angle) * radius,
-        y: cy + Math.sin(angle) * radius,
-        strength: peak.magnitude,
-        freqRatio: peak.freqRatio,
-      }
-    })
-  }
-
-  #applyAttraction(volume) {
-    if (!this.attractors.length) return
+  #applyPlateForces(volume) {
+    const halfW = this.width / 2
+    const halfH = this.height / 2
+    const scale = Math.min(halfW, halfH)
     const energy = Math.min(volume, 1)
+    const eps = 0.01
 
-    for (const p of this.particles) {
-      let ax = 0
-      let ay = 0
-      let bestForce = 0
-      let bestTone = p.tone
+    for (let i = 0; i < this.currentActiveN; i++) {
+      const p = this.particles[i]
+      const nx = (p.x - halfW) / halfW
+      const ny = (p.y - halfH) / halfH
 
-      for (const a of this.attractors) {
-        const dx = a.x - p.x
-        const dy = a.y - p.y
-        const dist = Math.hypot(dx, dy) || 1
-        const force = (ATTRACTOR_STRENGTH * a.strength * energy) / dist
-        ax += (dx / dist) * force
-        ay += (dy / dist) * force
-        if (force > bestForce) {
-          bestForce = force
-          bestTone = a.freqRatio
-        }
-      }
+      const z = this.#plateZ(nx, ny)
+      const gx = (this.#plateZ(nx + eps, ny) - z) / eps
+      const gy = (this.#plateZ(nx, ny + eps) - z) / eps
 
-      p.vx += ax
-      p.vy += ay
-      p.tone = bestTone
+      // Pulls toward decreasing |z| (a nodal line), scaled to pixel space.
+      p.vx += -SETTLE_STRENGTH * z * gx * scale
+      p.vy += -SETTLE_STRENGTH * z * gy * scale
+
+      // Shakes particles sitting on high-amplitude (antinode) zones, same as
+      // real sand won't settle where the plate is still vibrating hard.
+      const agitation = Math.abs(z) * AGITATION_STRENGTH * energy
+      p.vx += (Math.random() - 0.5) * agitation
+      p.vy += (Math.random() - 0.5) * agitation
     }
   }
 
   #clampSpeeds() {
-    for (const p of this.particles) {
+    for (let i = 0; i < this.currentActiveN; i++) {
+      const p = this.particles[i]
       const speed = Math.hypot(p.vx, p.vy)
       if (speed > MAX_SPEED) {
         p.vx = (p.vx / speed) * MAX_SPEED
@@ -176,11 +235,12 @@ export class ParticleSystem {
     }
   }
 
-  #resolveCollisions() {
+  #resolveOverlaps() {
     const grid = new Map()
     const cellKey = (cx, cy) => `${cx}:${cy}`
+    const n = this.currentActiveN
 
-    for (let i = 0; i < this.particles.length; i++) {
+    for (let i = 0; i < n; i++) {
       const p = this.particles[i]
       const key = cellKey(Math.floor(p.x / CELL_SIZE), Math.floor(p.y / CELL_SIZE))
       let bucket = grid.get(key)
@@ -191,7 +251,7 @@ export class ParticleSystem {
       bucket.push(i)
     }
 
-    for (let i = 0; i < this.particles.length; i++) {
+    for (let i = 0; i < n; i++) {
       const p = this.particles[i]
       const cx = Math.floor(p.x / CELL_SIZE)
       const cy = Math.floor(p.y / CELL_SIZE)
@@ -201,14 +261,16 @@ export class ParticleSystem {
           if (!bucket) continue
           for (const j of bucket) {
             if (j <= i) continue
-            this.#collide(p, this.particles[j])
+            this.#separate(p, this.particles[j])
           }
         }
       }
     }
   }
 
-  #collide(a, b) {
+  // Positional de-overlap plus a small damped push — grains settle against
+  // each other along a nodal line instead of bouncing elastically off it.
+  #separate(a, b) {
     const dx = b.x - a.x
     const dy = b.y - a.y
     const dist2 = dx * dx + dy * dy
@@ -218,45 +280,25 @@ export class ParticleSystem {
     const dist = Math.sqrt(dist2) || 0.001
     const nx = dx / dist
     const ny = dy / dist
-
     const overlap = (minDist - dist) / 2
+
     a.x -= nx * overlap
     a.y -= ny * overlap
     b.x += nx * overlap
     b.y += ny * overlap
 
-    const rvx = b.vx - a.vx
-    const rvy = b.vy - a.vy
-    const velAlongNormal = rvx * nx + rvy * ny
-    if (velAlongNormal > 0) return
-
-    const invMassA = 1 / a.mass
-    const invMassB = 1 / b.mass
-    const impulse = (-2 * velAlongNormal) / (invMassA + invMassB)
-    const ix = impulse * nx
-    const iy = impulse * ny
-
-    a.vx -= ix * invMassA
-    a.vy -= iy * invMassA
-    b.vx += ix * invMassB
-    b.vy += iy * invMassB
+    a.vx -= nx * REPEL_STRENGTH
+    a.vy -= ny * REPEL_STRENGTH
+    b.vx += nx * REPEL_STRENGTH
+    b.vy += ny * REPEL_STRENGTH
   }
 
   draw(ctx, soundActive) {
     ctx.clearRect(0, 0, this.width, this.height)
-    for (const p of this.particles) {
-      const speed = Math.hypot(p.vx, p.vy)
-      const t = Math.min(speed / MAX_SPEED, 1)
-
+    for (let i = 0; i < this.currentActiveN; i++) {
+      const p = this.particles[i]
       ctx.beginPath()
-      if (soundActive) {
-        // low pitch -> warm (hue ~20), high pitch -> cool (hue ~260)
-        const hue = 20 + p.tone * 240
-        const light = 55 + t * 20
-        ctx.fillStyle = `hsl(${hue}, 85%, ${light}%)`
-      } else {
-        ctx.fillStyle = `hsl(250, 25%, 55%)`
-      }
+      ctx.fillStyle = soundActive ? `hsl(${this.hue}, 80%, 58%)` : `hsl(250, 25%, 55%)`
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
       ctx.fill()
     }

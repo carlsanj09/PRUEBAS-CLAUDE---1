@@ -74,6 +74,13 @@
   font-weight: 600;
 }
 
+.count {
+  font-size: 0.8rem;
+  color: var(--text);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
 .sensitivity {
   display: flex;
   align-items: center;

@@ -9,6 +9,7 @@ export default function ParticleField() {
   const canvasRef = useRef(null)
   const meterFillRef = useRef(null)
   const statusRef = useRef(null)
+  const countRef = useRef(null)
   const systemRef = useRef(null)
   const meterRef = useRef(null)
   const rafRef = useRef(null)
@@ -46,11 +47,14 @@ export default function ParticleField() {
     const loop = () => {
       const volume = meterRef.current ? meterRef.current.getVolume() : 0
       const peaks = meterRef.current ? meterRef.current.getSpectralPeaks() : []
-      const { soundActive } = systemRef.current.step(volume, peaks)
+      const { soundActive, activeCount } = systemRef.current.step(volume, peaks)
       systemRef.current.draw(ctx, soundActive)
 
       if (meterFillRef.current) {
         meterFillRef.current.style.width = `${Math.min(volume * 220, 100)}%`
+      }
+      if (countRef.current) {
+        countRef.current.textContent = `${activeCount} partículas`
       }
       if (statusRef.current) {
         statusRef.current.classList.toggle('on', soundActive)
@@ -107,6 +111,7 @@ export default function ParticleField() {
         </div>
 
         <span ref={statusRef} className="status" />
+        <span ref={countRef} className="count">1000 partículas</span>
 
         <label className="sensitivity">
           Sensibilidad

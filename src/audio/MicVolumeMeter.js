@@ -1,4 +1,8 @@
-const FFT_SIZE = 2048
+// 8192 gives ~5.9 Hz/bin at 48 kHz, needed to tell a guitar low E (82.4 Hz)
+// apart from its own 2nd harmonic (~165 Hz) instead of locking onto whichever
+// is spectrally louder. The wider analysis window (~170ms) is fine here since
+// the patterns are meant to morph slowly anyway.
+const FFT_SIZE = 8192
 const ATTACK = 0.6
 const RELEASE = 0.15
 const MIN_PEAK_MAGNITUDE = 24 // 0-255 scale; filters out analyser noise floor
@@ -22,7 +26,17 @@ export class MicVolumeMeter {
   }
 
   async start() {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // Default constraints enable voice-call DSP (echo cancellation, noise
+    // suppression, auto gain) which commonly high-pass filters everything
+    // below ~100Hz — enough to erase a low guitar string before it reaches
+    // the analyser. Ask for full-bandwidth, unprocessed audio instead.
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    })
     this.audioContext = new (window.AudioContext || window.webkitAudioContext)()
     const source = this.audioContext.createMediaStreamSource(this.stream)
     this.analyser = this.audioContext.createAnalyser()
@@ -55,7 +69,7 @@ export class MicVolumeMeter {
 
   // Finds the strongest, well-separated local maxima in the spectrum so
   // distinct tones (voice pitch, instrument harmonics) map to distinct points.
-  getSpectralPeaks(maxPeaks = 4, minSeparation = 6) {
+  getSpectralPeaks(maxPeaks = 4, minSeparation = 24) {
     if (!this.analyser) return []
     this.analyser.getByteFrequencyData(this.freqData)
     const data = this.freqData
@@ -85,7 +99,7 @@ export class MicVolumeMeter {
       const hz = (p.index * sampleRate) / this.analyser.fftSize
       const logHz = Math.log2(Math.max(hz, LOG_FREQ_MIN))
       const freqRatio = Math.min(Math.max((logHz - logMin) / (logMax - logMin), 0), 1)
-      return { freqRatio, magnitude: p.magnitude / 255 }
+      return { hz, freqRatio, magnitude: p.magnitude / 255 }
     })
   }
 
