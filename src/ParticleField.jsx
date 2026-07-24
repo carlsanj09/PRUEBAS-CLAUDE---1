@@ -4,6 +4,7 @@ import { MicVolumeMeter } from './audio/MicVolumeMeter'
 
 const DEFAULT_SENSITIVITY = 3.5
 const DEFAULT_SPEED = 0.55
+const DEFAULT_GLOW_COLOR = '#aa3bff'
 
 export default function ParticleField() {
   const canvasRef = useRef(null)
@@ -17,6 +18,7 @@ export default function ParticleField() {
   const [micState, setMicState] = useState('idle')
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY)
   const [speed, setSpeed] = useState(DEFAULT_SPEED)
+  const [glowColor, setGlowColor] = useState(DEFAULT_GLOW_COLOR)
 
   useEffect(() => {
     meterRef.current?.setSensitivity(sensitivity)
@@ -76,7 +78,7 @@ export default function ParticleField() {
             : ''
       }
       if (glowRef.current) {
-        glowRef.current.style.opacity = Math.min(volume * 1.8, 0.9)
+        glowRef.current.style.opacity = Math.min(volume * 2.6, 1)
       }
 
       rafRef.current = requestAnimationFrame(loop)
@@ -152,6 +154,15 @@ export default function ParticleField() {
           />
         </label>
 
+        <label className="sensitivity">
+          Color del resplandor
+          <input
+            type="color"
+            value={glowColor}
+            onChange={(e) => setGlowColor(e.target.value)}
+          />
+        </label>
+
         {micState === 'denied' && (
           <p className="hint">
             Permiso de micrófono denegado. Habilítalo en la configuración del navegador para
@@ -171,7 +182,7 @@ export default function ParticleField() {
 
       <div className="canvas-wrap">
         <canvas ref={canvasRef} />
-        <div ref={glowRef} className="glow" />
+        <div ref={glowRef} className="glow" style={{ '--glow-color': glowColor }} />
       </div>
     </div>
   )

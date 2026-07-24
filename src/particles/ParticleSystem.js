@@ -11,6 +11,7 @@ const MAX_SPEED = 7
 // syllable doesn't cause the field to flicker on/off every frame.
 const ENTER_THRESHOLD = 0.012
 const EXIT_THRESHOLD = 0.006
+const ALPHA_SMOOTH = 0.02 // fade in/out with sound, all the way to invisible in silence
 
 // Particle count follows the dominant frequency directly (not the note
 // table): flat at half below a low guitar E, ramping to the "1000" reference
@@ -39,6 +40,14 @@ const AGITATION_SMOOTH = 0.06 // low-pass on the shake so it wanders instead of 
 const REPEL_STRENGTH = 0.6 // keeps grains from perfectly overlapping
 const DRAG = 0.97
 const DEFAULT_SPEED_SCALE = 0.55 // overall visual speed multiplier, user-adjustable
+
+// New particles always stream in from the top-left corner; retired ones
+// travel out toward the bottom-right corner and fade/shrink as they arrive.
+const SPAWN_MARGIN = 4
+const EXIT_MARGIN = 4
+const EXIT_HOMING = 0.05
+const EXIT_FADE_SECONDS = 1.1
+const EXIT_MAX_SECONDS = 3
 
 // Five qualitatively different plate figures (not just parameter variants of
 // one formula) so different notes can look structurally distinct, matching
@@ -72,8 +81,17 @@ export class ParticleSystem {
     this.width = width
     this.height = height
     this.particles = Array.from({ length: maxCount }, () => this.#createParticle())
+    // Every particle lives in exactly one of these three lists at a time.
+    // Initial population starts scattered & active (nothing to transition
+    // from yet); only count changes *during* a session stream through the
+    // spawn/exit corners.
+    this.activeParticles = this.particles.slice()
+    this.leavingParticles = []
+    this.pool = []
+
     this.active = false
     this.time = 0
+    this.alpha = 0 // invisible until real sound is detected
 
     this.voices = Array.from({ length: VOICE_COUNT }, () => ({
       weight: 0,
@@ -94,7 +112,6 @@ export class ParticleSystem {
 
     this.activeCount = maxCount
     this.targetCount = maxCount
-    this.currentActiveN = maxCount
   }
 
   #createParticle() {
@@ -108,6 +125,8 @@ export class ParticleSystem {
       baseR: r,
       jx: 0,
       jy: 0,
+      leaveT: 0,
+      fade: 1,
     }
   }
 
@@ -115,14 +134,25 @@ export class ParticleSystem {
     this.speedScale = scale
   }
 
-  #respawnParticle(p) {
-    p.x = p.baseR + Math.random() * (this.width - 2 * p.baseR)
-    p.y = p.baseR + Math.random() * (this.height - 2 * p.baseR)
-    const { vx, vy } = randomVelocity(IDLE_SPEED)
-    p.vx = vx
-    p.vy = vy
+  // Pulled from the pool when the count target rises: always streams in
+  // from the same spot (top-left) so growth reads as one consistent source.
+  #activateParticle(p) {
+    p.x = SPAWN_MARGIN + p.baseR + Math.random() * 4
+    p.y = SPAWN_MARGIN + p.baseR + Math.random() * 4
+    const angle = Math.PI / 4 + (Math.random() - 0.5) * 0.6 // outward, toward the field
+    const speed = IDLE_SPEED * 4
+    p.vx = Math.cos(angle) * speed
+    p.vy = Math.sin(angle) * speed
     p.jx = 0
     p.jy = 0
+    p.leaveT = 0
+    p.fade = 1
+  }
+
+  // Moved to the leaving list when the count target falls: glides to the
+  // bottom-right corner and shrinks/fades out instead of just vanishing.
+  #startLeaving(p) {
+    p.leaveT = 0
   }
 
   resize(width, height) {
@@ -141,6 +171,7 @@ export class ParticleSystem {
     if (volume > ENTER_THRESHOLD) this.active = true
     else if (volume < EXIT_THRESHOLD) this.active = false
     const soundActive = this.active
+    this.alpha += ((soundActive ? 1 : 0) - this.alpha) * ALPHA_SMOOTH
 
     this.#updateVoiceTargets(peaks)
     if (peaks[0]) this.targetCount = countForHz(peaks[0].hz)
@@ -161,8 +192,8 @@ export class ParticleSystem {
     this.hue += (this.targetHue - this.hue) * HUE_SMOOTH
     this.activeCount += (this.targetCount - this.activeCount) * COUNT_SMOOTH
 
-    const activeN = Math.max(MIN_PARTICLES, Math.min(MAX_PARTICLES, Math.round(this.activeCount)))
-    this.#syncActiveCount(activeN)
+    const targetActiveN = Math.max(MIN_PARTICLES, Math.min(MAX_PARTICLES, Math.round(this.activeCount)))
+    this.#syncActiveCount(targetActiveN)
     this.sizeScale = this.activeCount > COUNT_MID_N ? Math.sqrt(COUNT_MID_N / this.activeCount) : 1
 
     if (soundActive) {
@@ -172,8 +203,7 @@ export class ParticleSystem {
       this.#dampToIdle()
     }
 
-    for (let i = 0; i < this.currentActiveN; i++) {
-      const p = this.particles[i]
+    for (const p of this.activeParticles) {
       const r = p.baseR * this.sizeScale
       p.vx *= DRAG
       p.vy *= DRAG
@@ -198,9 +228,9 @@ export class ParticleSystem {
     }
 
     this.#clampSpeeds()
+    this.#updateLeavingParticles()
 
-    const notes = this.voices.filter((v) => v.targetWeight > 0.05).map((v) => v.noteLabel)
-    return { soundActive, volume, activeCount: this.currentActiveN, notes }
+    return { soundActive, volume, activeCount: this.activeParticles.length }
   }
 
   #updateVoiceTargets(peaks) {
@@ -224,18 +254,51 @@ export class ParticleSystem {
     }
   }
 
-  #syncActiveCount(activeN) {
-    if (activeN > this.currentActiveN) {
-      for (let i = this.currentActiveN; i < activeN; i++) {
-        this.#respawnParticle(this.particles[i])
+  #syncActiveCount(targetActiveN) {
+    const current = this.activeParticles.length
+    if (targetActiveN > current) {
+      let need = targetActiveN - current
+      while (need > 0 && this.pool.length > 0) {
+        const p = this.pool.pop()
+        this.#activateParticle(p)
+        this.activeParticles.push(p)
+        need--
+      }
+    } else if (targetActiveN < current) {
+      let excess = current - targetActiveN
+      while (excess > 0 && this.activeParticles.length > 0) {
+        const p = this.activeParticles.pop()
+        this.#startLeaving(p)
+        this.leavingParticles.push(p)
+        excess--
       }
     }
-    this.currentActiveN = activeN
+  }
+
+  // Kinematic glide toward the bottom-right corner (bypasses plate physics),
+  // shrinking/fading out, then returned to the pool once it arrives.
+  #updateLeavingParticles() {
+    const targetX = this.width - EXIT_MARGIN
+    const targetY = this.height - EXIT_MARGIN
+    const homing = EXIT_HOMING * this.speedScale
+
+    for (let i = this.leavingParticles.length - 1; i >= 0; i--) {
+      const p = this.leavingParticles[i]
+      p.leaveT += 1 / 60
+      p.x += (targetX - p.x) * homing
+      p.y += (targetY - p.y) * homing
+      p.fade = Math.max(0, 1 - p.leaveT / EXIT_FADE_SECONDS)
+
+      const dist = Math.hypot(targetX - p.x, targetY - p.y)
+      if (dist < 6 || p.leaveT > EXIT_MAX_SECONDS) {
+        this.leavingParticles.splice(i, 1)
+        this.pool.push(p)
+      }
+    }
   }
 
   #dampToIdle() {
-    for (let i = 0; i < this.currentActiveN; i++) {
-      const p = this.particles[i]
+    for (const p of this.activeParticles) {
       const speed = Math.hypot(p.vx, p.vy)
       if (speed < 0.0001) continue
       const nextSpeed = speed + (IDLE_SPEED - speed) * IDLE_DAMPING
@@ -268,8 +331,7 @@ export class ParticleSystem {
     const energy = Math.min(volume, 1)
     const eps = 0.01
 
-    for (let i = 0; i < this.currentActiveN; i++) {
-      const p = this.particles[i]
+    for (const p of this.activeParticles) {
       const nx = (p.x - halfW) / halfW
       const ny = (p.y - halfH) / halfH
 
@@ -295,8 +357,7 @@ export class ParticleSystem {
   }
 
   #clampSpeeds() {
-    for (let i = 0; i < this.currentActiveN; i++) {
-      const p = this.particles[i]
+    for (const p of this.activeParticles) {
       const speed = Math.hypot(p.vx, p.vy)
       if (speed > MAX_SPEED) {
         p.vx = (p.vx / speed) * MAX_SPEED
@@ -308,10 +369,11 @@ export class ParticleSystem {
   #resolveOverlaps() {
     const grid = new Map()
     const cellKey = (cx, cy) => `${cx}:${cy}`
-    const n = this.currentActiveN
+    const particles = this.activeParticles
+    const n = particles.length
 
     for (let i = 0; i < n; i++) {
-      const p = this.particles[i]
+      const p = particles[i]
       const key = cellKey(Math.floor(p.x / CELL_SIZE), Math.floor(p.y / CELL_SIZE))
       let bucket = grid.get(key)
       if (!bucket) {
@@ -322,7 +384,7 @@ export class ParticleSystem {
     }
 
     for (let i = 0; i < n; i++) {
-      const p = this.particles[i]
+      const p = particles[i]
       const cx = Math.floor(p.x / CELL_SIZE)
       const cy = Math.floor(p.y / CELL_SIZE)
       for (let dx = -1; dx <= 1; dx++) {
@@ -331,7 +393,7 @@ export class ParticleSystem {
           if (!bucket) continue
           for (const j of bucket) {
             if (j <= i) continue
-            this.#separate(p, this.particles[j])
+            this.#separate(p, particles[j])
           }
         }
       }
@@ -367,11 +429,24 @@ export class ParticleSystem {
 
   draw(ctx, soundActive) {
     ctx.clearRect(0, 0, this.width, this.height)
-    for (let i = 0; i < this.currentActiveN; i++) {
-      const p = this.particles[i]
+    if (this.alpha < 0.003 && this.leavingParticles.length === 0) return
+
+    const activeColor = soundActive ? `${this.hue}, 80%, 58%` : '250, 25%, 55%'
+    for (const p of this.activeParticles) {
+      const a = this.alpha
+      if (a < 0.003) continue
       ctx.beginPath()
-      ctx.fillStyle = soundActive ? `hsl(${this.hue}, 80%, 58%)` : `hsl(250, 25%, 55%)`
+      ctx.fillStyle = `hsla(${activeColor}, ${a})`
       ctx.arc(p.x, p.y, p.baseR * this.sizeScale, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    for (const p of this.leavingParticles) {
+      const a = this.alpha * p.fade
+      if (a < 0.003) continue
+      ctx.beginPath()
+      ctx.fillStyle = `hsla(${activeColor}, ${a})`
+      ctx.arc(p.x, p.y, p.baseR * this.sizeScale * p.fade, 0, Math.PI * 2)
       ctx.fill()
     }
   }
