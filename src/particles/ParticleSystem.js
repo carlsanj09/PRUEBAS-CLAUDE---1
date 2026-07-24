@@ -41,13 +41,12 @@ const REPEL_STRENGTH = 0.6 // keeps grains from perfectly overlapping
 const DRAG = 0.97
 const DEFAULT_SPEED_SCALE = 0.55 // overall visual speed multiplier, user-adjustable
 
-// New particles always stream in from the top-left corner; retired ones
-// travel out toward the bottom-right corner and fade/shrink as they arrive.
+// New particles always stream in from the top-left corner, each scattering
+// off in its own random direction (organic, not a uniform stream). Retired
+// ones simply shrink and fade out wherever they are, drifting on their
+// existing inertia, instead of traveling anywhere.
 const SPAWN_MARGIN = 4
-const EXIT_MARGIN = 4
-const EXIT_HOMING = 0.05
-const EXIT_FADE_SECONDS = 1.1
-const EXIT_MAX_SECONDS = 3
+const EXIT_FADE_SECONDS = 0.9
 
 // Five qualitatively different plate figures (not just parameter variants of
 // one formula) so different notes can look structurally distinct, matching
@@ -134,13 +133,15 @@ export class ParticleSystem {
     this.speedScale = scale
   }
 
-  // Pulled from the pool when the count target rises: always streams in
-  // from the same spot (top-left) so growth reads as one consistent source.
+  // Pulled from the pool when the count target rises: always starts from
+  // the same spot (top-left) so growth reads as one consistent source, but
+  // each particle scatters off in its own random direction from there —
+  // otherwise they'd read as a mechanical stream instead of organic growth.
   #activateParticle(p) {
     p.x = SPAWN_MARGIN + p.baseR + Math.random() * 4
     p.y = SPAWN_MARGIN + p.baseR + Math.random() * 4
-    const angle = Math.PI / 4 + (Math.random() - 0.5) * 0.6 // outward, toward the field
-    const speed = IDLE_SPEED * 4
+    const angle = Math.random() * Math.PI * 2
+    const speed = IDLE_SPEED * (2 + Math.random() * 3)
     p.vx = Math.cos(angle) * speed
     p.vy = Math.sin(angle) * speed
     p.jx = 0
@@ -149,8 +150,8 @@ export class ParticleSystem {
     p.fade = 1
   }
 
-  // Moved to the leaving list when the count target falls: glides to the
-  // bottom-right corner and shrinks/fades out instead of just vanishing.
+  // Moved to the leaving list when the count target falls: just shrinks and
+  // fades out wherever it happens to be, drifting on its existing velocity.
   #startLeaving(p) {
     p.leaveT = 0
   }
@@ -275,22 +276,20 @@ export class ParticleSystem {
     }
   }
 
-  // Kinematic glide toward the bottom-right corner (bypasses plate physics),
-  // shrinking/fading out, then returned to the pool once it arrives.
+  // Shrinks and fades out in place, drifting on whatever velocity it already
+  // had (no travel toward a target) — reads as a soft local dissolve rather
+  // than particles being herded somewhere before disappearing.
   #updateLeavingParticles() {
-    const targetX = this.width - EXIT_MARGIN
-    const targetY = this.height - EXIT_MARGIN
-    const homing = EXIT_HOMING * this.speedScale
-
     for (let i = this.leavingParticles.length - 1; i >= 0; i--) {
       const p = this.leavingParticles[i]
       p.leaveT += 1 / 60
-      p.x += (targetX - p.x) * homing
-      p.y += (targetY - p.y) * homing
+      p.vx *= DRAG
+      p.vy *= DRAG
+      p.x += p.vx * this.speedScale
+      p.y += p.vy * this.speedScale
       p.fade = Math.max(0, 1 - p.leaveT / EXIT_FADE_SECONDS)
 
-      const dist = Math.hypot(targetX - p.x, targetY - p.y)
-      if (dist < 6 || p.leaveT > EXIT_MAX_SECONDS) {
+      if (p.fade <= 0) {
         this.leavingParticles.splice(i, 1)
         this.pool.push(p)
       }

@@ -5,6 +5,7 @@ import { MicVolumeMeter } from './audio/MicVolumeMeter'
 const DEFAULT_SENSITIVITY = 3.5
 const DEFAULT_SPEED = 0.55
 const DEFAULT_GLOW_COLOR = '#aa3bff'
+const DEFAULT_GLOW_INTENSITY = 0.85
 
 export default function ParticleField() {
   const canvasRef = useRef(null)
@@ -19,6 +20,9 @@ export default function ParticleField() {
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY)
   const [speed, setSpeed] = useState(DEFAULT_SPEED)
   const [glowColor, setGlowColor] = useState(DEFAULT_GLOW_COLOR)
+  const [glowIntensity, setGlowIntensity] = useState(DEFAULT_GLOW_INTENSITY)
+  const glowIntensityRef = useRef(glowIntensity)
+  glowIntensityRef.current = glowIntensity
 
   useEffect(() => {
     meterRef.current?.setSensitivity(sensitivity)
@@ -78,7 +82,7 @@ export default function ParticleField() {
             : ''
       }
       if (glowRef.current) {
-        glowRef.current.style.opacity = Math.min(volume * 2.6, 1)
+        glowRef.current.style.opacity = Math.min(volume * 2.6, 1) * glowIntensityRef.current
       }
 
       rafRef.current = requestAnimationFrame(loop)
@@ -160,6 +164,18 @@ export default function ParticleField() {
             type="color"
             value={glowColor}
             onChange={(e) => setGlowColor(e.target.value)}
+          />
+        </label>
+
+        <label className="sensitivity">
+          Intensidad del resplandor
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={glowIntensity}
+            onChange={(e) => setGlowIntensity(Number(e.target.value))}
           />
         </label>
 
