@@ -35,8 +35,10 @@ const ORIENTATION_DRIFT = 0.0016 // constant slow plate rotation per voice
 
 const SETTLE_STRENGTH = 0.0016 // pull toward nodal lines
 const AGITATION_STRENGTH = 5 // shake proportional to local vibration * volume
+const AGITATION_SMOOTH = 0.06 // low-pass on the shake so it wanders instead of flickering (organic, not noisy)
 const REPEL_STRENGTH = 0.6 // keeps grains from perfectly overlapping
 const DRAG = 0.97
+const DEFAULT_SPEED_SCALE = 0.55 // overall visual speed multiplier, user-adjustable
 
 // Five qualitatively different plate figures (not just parameter variants of
 // one formula) so different notes can look structurally distinct, matching
@@ -88,6 +90,7 @@ export class ParticleSystem {
     this.hue = 220
     this.targetHue = 220
     this.sizeScale = 1
+    this.speedScale = DEFAULT_SPEED_SCALE
 
     this.activeCount = maxCount
     this.targetCount = maxCount
@@ -97,7 +100,19 @@ export class ParticleSystem {
   #createParticle() {
     const r = MIN_RADIUS + Math.random() * MAX_RADIUS_ADD
     const { vx, vy } = randomVelocity(IDLE_SPEED)
-    return { x: r + Math.random() * (this.width - 2 * r), y: r + Math.random() * (this.height - 2 * r), vx, vy, baseR: r }
+    return {
+      x: r + Math.random() * (this.width - 2 * r),
+      y: r + Math.random() * (this.height - 2 * r),
+      vx,
+      vy,
+      baseR: r,
+      jx: 0,
+      jy: 0,
+    }
+  }
+
+  setSpeedScale(scale) {
+    this.speedScale = scale
   }
 
   #respawnParticle(p) {
@@ -106,6 +121,8 @@ export class ParticleSystem {
     const { vx, vy } = randomVelocity(IDLE_SPEED)
     p.vx = vx
     p.vy = vy
+    p.jx = 0
+    p.jy = 0
   }
 
   resize(width, height) {
@@ -160,8 +177,8 @@ export class ParticleSystem {
       const r = p.baseR * this.sizeScale
       p.vx *= DRAG
       p.vy *= DRAG
-      p.x += p.vx
-      p.y += p.vy
+      p.x += p.vx * this.speedScale
+      p.y += p.vy * this.speedScale
 
       if (p.x - r < 0) {
         p.x = r
@@ -265,10 +282,15 @@ export class ParticleSystem {
       p.vy += -SETTLE_STRENGTH * z * gy * scale
 
       // Shakes particles sitting on high-amplitude (antinode) zones, same as
-      // real sand won't settle where the plate is still vibrating hard.
+      // real sand won't settle where the plate is still vibrating hard. The
+      // shake target is low-passed (an OU-ish random walk) instead of added
+      // directly, so it wanders smoothly rather than flickering frame to
+      // frame — reads as organic jitter instead of digital noise.
       const agitation = Math.abs(z) * AGITATION_STRENGTH * energy
-      p.vx += (Math.random() - 0.5) * agitation
-      p.vy += (Math.random() - 0.5) * agitation
+      p.jx += ((Math.random() - 0.5) * agitation - p.jx) * AGITATION_SMOOTH
+      p.jy += ((Math.random() - 0.5) * agitation - p.jy) * AGITATION_SMOOTH
+      p.vx += p.jx
+      p.vy += p.jy
     }
   }
 

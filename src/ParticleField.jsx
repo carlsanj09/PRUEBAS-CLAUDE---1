@@ -3,30 +3,40 @@ import { ParticleSystem, MAX_PARTICLES } from './particles/ParticleSystem'
 import { MicVolumeMeter } from './audio/MicVolumeMeter'
 
 const DEFAULT_SENSITIVITY = 3.5
+const DEFAULT_SPEED = 0.55
 
 export default function ParticleField() {
   const canvasRef = useRef(null)
+  const glowRef = useRef(null)
   const meterFillRef = useRef(null)
   const statusRef = useRef(null)
   const countRef = useRef(null)
-  const notesRef = useRef(null)
   const systemRef = useRef(null)
   const meterRef = useRef(null)
   const rafRef = useRef(null)
   const [micState, setMicState] = useState('idle')
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY)
+  const [speed, setSpeed] = useState(DEFAULT_SPEED)
 
   useEffect(() => {
     meterRef.current?.setSensitivity(sensitivity)
   }, [sensitivity])
 
   useEffect(() => {
+    systemRef.current?.setSpeedScale(speed)
+  }, [speed])
+
+  useEffect(() => {
     const canvas = canvasRef.current
+    // The container has a visible border; measuring with clientWidth/Height
+    // (content box) instead of getBoundingClientRect (border box) keeps the
+    // simulated bounds flush with that border instead of a few px inside it.
     const container = canvas.parentElement
     const ctx = canvas.getContext('2d')
 
     const resize = () => {
-      const { width, height } = container.getBoundingClientRect()
+      const width = container.clientWidth
+      const height = container.clientHeight
       const dpr = window.devicePixelRatio || 1
       canvas.width = width * dpr
       canvas.height = height * dpr
@@ -36,6 +46,7 @@ export default function ParticleField() {
 
       if (!systemRef.current) {
         systemRef.current = new ParticleSystem(width, height, MAX_PARTICLES)
+        systemRef.current.setSpeedScale(speed)
       } else {
         systemRef.current.resize(width, height)
       }
@@ -47,7 +58,7 @@ export default function ParticleField() {
     const loop = () => {
       const volume = meterRef.current ? meterRef.current.getVolume() : 0
       const peaks = meterRef.current ? meterRef.current.getSpectralPeaks(3) : []
-      const { soundActive, activeCount, notes } = systemRef.current.step(volume, peaks)
+      const { soundActive, activeCount } = systemRef.current.step(volume, peaks)
       systemRef.current.draw(ctx, soundActive)
 
       if (meterFillRef.current) {
@@ -56,9 +67,6 @@ export default function ParticleField() {
       if (countRef.current) {
         countRef.current.textContent = `${activeCount} partículas`
       }
-      if (notesRef.current) {
-        notesRef.current.textContent = notes.length ? notes.join(' + ') : ''
-      }
       if (statusRef.current) {
         statusRef.current.classList.toggle('on', soundActive)
         statusRef.current.textContent = soundActive
@@ -66,6 +74,9 @@ export default function ParticleField() {
           : meterRef.current
             ? '\u{1F508} Silencio'
             : ''
+      }
+      if (glowRef.current) {
+        glowRef.current.style.opacity = Math.min(volume * 1.8, 0.9)
       }
 
       rafRef.current = requestAnimationFrame(loop)
@@ -76,6 +87,7 @@ export default function ParticleField() {
       cancelAnimationFrame(rafRef.current)
       window.removeEventListener('resize', resize)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => () => meterRef.current?.stop(), [])
@@ -115,7 +127,6 @@ export default function ParticleField() {
 
         <span ref={statusRef} className="status" />
         <span ref={countRef} className="count">1000 partículas</span>
-        <span ref={notesRef} className="notes" />
 
         <label className="sensitivity">
           Sensibilidad
@@ -126,6 +137,18 @@ export default function ParticleField() {
             step="0.5"
             value={sensitivity}
             onChange={(e) => setSensitivity(Number(e.target.value))}
+          />
+        </label>
+
+        <label className="sensitivity">
+          Velocidad
+          <input
+            type="range"
+            min="0.1"
+            max="1.5"
+            step="0.05"
+            value={speed}
+            onChange={(e) => setSpeed(Number(e.target.value))}
           />
         </label>
 
@@ -148,6 +171,7 @@ export default function ParticleField() {
 
       <div className="canvas-wrap">
         <canvas ref={canvasRef} />
+        <div ref={glowRef} className="glow" />
       </div>
     </div>
   )
