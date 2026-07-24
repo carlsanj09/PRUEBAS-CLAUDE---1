@@ -3,6 +3,7 @@ import { ParticleSystem } from './particles/ParticleSystem'
 import { MicVolumeMeter } from './audio/MicVolumeMeter'
 
 const PARTICLE_COUNT = 1000
+const DEFAULT_SENSITIVITY = 3.5
 
 export default function ParticleField() {
   const canvasRef = useRef(null)
@@ -12,6 +13,11 @@ export default function ParticleField() {
   const meterRef = useRef(null)
   const rafRef = useRef(null)
   const [micState, setMicState] = useState('idle')
+  const [sensitivity, setSensitivity] = useState(DEFAULT_SENSITIVITY)
+
+  useEffect(() => {
+    meterRef.current?.setSensitivity(sensitivity)
+  }, [sensitivity])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -39,7 +45,8 @@ export default function ParticleField() {
 
     const loop = () => {
       const volume = meterRef.current ? meterRef.current.getVolume() : 0
-      const { soundActive } = systemRef.current.step(volume)
+      const peaks = meterRef.current ? meterRef.current.getSpectralPeaks() : []
+      const { soundActive } = systemRef.current.step(volume, peaks)
       systemRef.current.draw(ctx, soundActive)
 
       if (meterFillRef.current) {
@@ -70,6 +77,7 @@ export default function ParticleField() {
     setMicState('requesting')
     try {
       const meter = new MicVolumeMeter()
+      meter.setSensitivity(sensitivity)
       await meter.start()
       meterRef.current = meter
       setMicState('active')
@@ -99,6 +107,18 @@ export default function ParticleField() {
         </div>
 
         <span ref={statusRef} className="status" />
+
+        <label className="sensitivity">
+          Sensibilidad
+          <input
+            type="range"
+            min="1"
+            max="8"
+            step="0.5"
+            value={sensitivity}
+            onChange={(e) => setSensitivity(Number(e.target.value))}
+          />
+        </label>
 
         {micState === 'denied' && (
           <p className="hint">

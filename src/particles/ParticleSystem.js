@@ -1,11 +1,21 @@
 const MIN_RADIUS = 2.2
 const MAX_RADIUS_ADD = 1.8
 const IDLE_SPEED = 0.15
-const MAX_ENERGY_MULTIPLIER = 5
-const SILENCE_THRESHOLD = 0.05
-const MAX_SPEED = 6
 const IDLE_DAMPING = 0.02
 const CELL_SIZE = 14
+const MAX_SPEED = 9
+
+// Hysteresis: enters "active" sooner than it exits, so a single loud
+// syllable doesn't cause the field to flicker on/off every frame.
+const ENTER_THRESHOLD = 0.012
+const EXIT_THRESHOLD = 0.006
+
+const JITTER_STRENGTH = 6 // kinetic energy injected per frame, proportional to volume
+const DRAG = 0.985 // friction so injected energy settles instead of accumulating forever
+
+const ATTRACTOR_STRENGTH = 0.06
+const ATTRACTOR_MIN_RADIUS_FRAC = 0.1
+const ATTRACTOR_MAX_RADIUS_FRAC = 0.42
 
 function randomVelocity(speed) {
   const angle = Math.random() * Math.PI * 2
@@ -17,6 +27,9 @@ export class ParticleSystem {
     this.width = width
     this.height = height
     this.particles = Array.from({ length: count }, () => this.#createParticle())
+    this.attractors = []
+    this.active = false
+    this.time = 0
   }
 
   #createParticle() {
@@ -29,7 +42,7 @@ export class ParticleSystem {
       vy,
       r,
       mass: r * r,
-      hue: 250 + Math.random() * 70,
+      tone: 0.5,
     }
   }
 
@@ -42,21 +55,29 @@ export class ParticleSystem {
     }
   }
 
-  step(volume) {
-    const soundActive = volume > SILENCE_THRESHOLD
-    const energy = soundActive
-      ? 1 + ((volume - SILENCE_THRESHOLD) / (1 - SILENCE_THRESHOLD)) * (MAX_ENERGY_MULTIPLIER - 1)
-      : 1
+  // `peaks`: [{ freqRatio: 0-1 (low->high pitch), magnitude: 0-1 }], strongest first.
+  step(volume, peaks = []) {
+    this.time += 1 / 60
+
+    if (volume > ENTER_THRESHOLD) this.active = true
+    else if (volume < EXIT_THRESHOLD) this.active = false
+    const soundActive = this.active
 
     if (soundActive) {
+      this.#updateAttractors(peaks)
+      this.#injectEnergy(volume)
+      this.#applyAttraction(volume)
       this.#resolveCollisions()
     } else {
+      this.attractors = []
       this.#dampToIdle()
     }
 
     for (const p of this.particles) {
-      p.x += p.vx * energy
-      p.y += p.vy * energy
+      p.vx *= DRAG
+      p.vy *= DRAG
+      p.x += p.vx
+      p.y += p.vy
 
       if (p.x - p.r < 0) {
         p.x = p.r
@@ -75,7 +96,9 @@ export class ParticleSystem {
       }
     }
 
-    return { soundActive, energy }
+    this.#clampSpeeds()
+
+    return { soundActive, volume }
   }
 
   #dampToIdle() {
@@ -85,6 +108,71 @@ export class ParticleSystem {
       const nextSpeed = speed + (IDLE_SPEED - speed) * IDLE_DAMPING
       p.vx = (p.vx / speed) * nextSpeed
       p.vy = (p.vy / speed) * nextSpeed
+    }
+  }
+
+  #injectEnergy(volume) {
+    const jitter = Math.min(volume, 1) * JITTER_STRENGTH
+    for (const p of this.particles) {
+      p.vx += (Math.random() - 0.5) * jitter
+      p.vy += (Math.random() - 0.5) * jitter
+    }
+  }
+
+  #updateAttractors(peaks) {
+    const cx = this.width / 2
+    const cy = this.height / 2
+    const maxR = Math.min(this.width, this.height) / 2
+
+    this.attractors = peaks.map((peak, i) => {
+      const angle = peak.freqRatio * Math.PI * 2 + this.time * 0.15 + i * 1.3
+      const radius =
+        maxR * (ATTRACTOR_MIN_RADIUS_FRAC + peak.magnitude * (ATTRACTOR_MAX_RADIUS_FRAC - ATTRACTOR_MIN_RADIUS_FRAC))
+      return {
+        x: cx + Math.cos(angle) * radius,
+        y: cy + Math.sin(angle) * radius,
+        strength: peak.magnitude,
+        freqRatio: peak.freqRatio,
+      }
+    })
+  }
+
+  #applyAttraction(volume) {
+    if (!this.attractors.length) return
+    const energy = Math.min(volume, 1)
+
+    for (const p of this.particles) {
+      let ax = 0
+      let ay = 0
+      let bestForce = 0
+      let bestTone = p.tone
+
+      for (const a of this.attractors) {
+        const dx = a.x - p.x
+        const dy = a.y - p.y
+        const dist = Math.hypot(dx, dy) || 1
+        const force = (ATTRACTOR_STRENGTH * a.strength * energy) / dist
+        ax += (dx / dist) * force
+        ay += (dy / dist) * force
+        if (force > bestForce) {
+          bestForce = force
+          bestTone = a.freqRatio
+        }
+      }
+
+      p.vx += ax
+      p.vy += ay
+      p.tone = bestTone
+    }
+  }
+
+  #clampSpeeds() {
+    for (const p of this.particles) {
+      const speed = Math.hypot(p.vx, p.vy)
+      if (speed > MAX_SPEED) {
+        p.vx = (p.vx / speed) * MAX_SPEED
+        p.vy = (p.vy / speed) * MAX_SPEED
+      }
     }
   }
 
@@ -116,14 +204,6 @@ export class ParticleSystem {
             this.#collide(p, this.particles[j])
           }
         }
-      }
-    }
-
-    for (const p of this.particles) {
-      const speed = Math.hypot(p.vx, p.vy)
-      if (speed > MAX_SPEED) {
-        p.vx = (p.vx / speed) * MAX_SPEED
-        p.vy = (p.vy / speed) * MAX_SPEED
       }
     }
   }
@@ -165,10 +245,18 @@ export class ParticleSystem {
   draw(ctx, soundActive) {
     ctx.clearRect(0, 0, this.width, this.height)
     for (const p of this.particles) {
+      const speed = Math.hypot(p.vx, p.vy)
+      const t = Math.min(speed / MAX_SPEED, 1)
+
       ctx.beginPath()
-      ctx.fillStyle = soundActive
-        ? `hsl(${p.hue}, 85%, 65%)`
-        : `hsl(${p.hue}, 25%, 55%)`
+      if (soundActive) {
+        // low pitch -> warm (hue ~20), high pitch -> cool (hue ~260)
+        const hue = 20 + p.tone * 240
+        const light = 55 + t * 20
+        ctx.fillStyle = `hsl(${hue}, 85%, ${light}%)`
+      } else {
+        ctx.fillStyle = `hsl(250, 25%, 55%)`
+      }
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
       ctx.fill()
     }
