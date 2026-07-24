@@ -1,0 +1,139 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  min-height: 100svh;
+  box-sizing: border-box;
+}
+
+.app h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--text-h);
+  text-align: center;
+}
+
+.stage {
+  width: 100%;
+  max-width: 1100px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hud button:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.meter {
+  width: 140px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 60ms linear;
+}
+
+.status {
+  font-size: 0.95rem;
+  color: var(--text);
+  min-width: 160px;
+}
+
+.status.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.count {
+  font-size: 0.8rem;
+  color: var(--text);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.sensitivity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.sensitivity input[type='range'] {
+  accent-color: var(--accent);
+  width: 110px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  opacity: 0.8;
+  flex-basis: 100%;
+}
+
+.canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 420px;
+  border: 2px solid var(--accent-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--code-bg);
+}
+
+.canvas-wrap canvas {
+  display: block;
+}
+
+.glow {
+  position: absolute;
+  inset: 0 0 70% 0;
+  /* A linear fade (rather than radial) reaches exactly 0 at its far edge
+     regardless of the box's aspect ratio, so there's no hard seam where it
+     gets clipped by the container's overflow. */
+  background: linear-gradient(to bottom, var(--glow-color, var(--accent)) 0%, transparent 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
+.sensitivity input[type='color'] {
+  width: 36px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
