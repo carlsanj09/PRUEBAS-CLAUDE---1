@@ -41,11 +41,11 @@ const REPEL_STRENGTH = 0.6 // keeps grains from perfectly overlapping
 const DRAG = 0.97
 const DEFAULT_SPEED_SCALE = 0.55 // overall visual speed multiplier, user-adjustable
 
-// New particles always stream in from the top-left corner, each scattering
-// off in its own random direction (organic, not a uniform stream). Retired
-// ones simply shrink and fade out wherever they are, drifting on their
-// existing inertia, instead of traveling anywhere.
-const SPAWN_MARGIN = 4
+// New particles always stream out from the composition's center, each
+// scattering off in its own random direction (organic, not a uniform
+// stream). Retired ones simply shrink and fade out wherever they are,
+// drifting on their existing inertia, instead of traveling anywhere.
+const SPAWN_JITTER = 4
 const EXIT_FADE_SECONDS = 0.9
 
 // Five qualitatively different plate figures (not just parameter variants of
@@ -82,8 +82,8 @@ export class ParticleSystem {
     this.particles = Array.from({ length: maxCount }, () => this.#createParticle())
     // Every particle lives in exactly one of these three lists at a time.
     // Initial population starts scattered & active (nothing to transition
-    // from yet); only count changes *during* a session stream through the
-    // spawn/exit corners.
+    // from yet); only count changes *during* a session stream out from the
+    // center / fade out in place.
     this.activeParticles = this.particles.slice()
     this.leavingParticles = []
     this.pool = []
@@ -106,6 +106,7 @@ export class ParticleSystem {
 
     this.hue = 220
     this.targetHue = 220
+    this.hueBase = 20 // user-adjustable; the reactive palette shifts around this
     this.sizeScale = 1
     this.speedScale = DEFAULT_SPEED_SCALE
 
@@ -133,13 +134,17 @@ export class ParticleSystem {
     this.speedScale = scale
   }
 
+  setHueBase(hue) {
+    this.hueBase = hue
+  }
+
   // Pulled from the pool when the count target rises: always starts from
-  // the same spot (top-left) so growth reads as one consistent source, but
+  // the composition's center so growth reads as one consistent source, but
   // each particle scatters off in its own random direction from there —
   // otherwise they'd read as a mechanical stream instead of organic growth.
   #activateParticle(p) {
-    p.x = SPAWN_MARGIN + p.baseR + Math.random() * 4
-    p.y = SPAWN_MARGIN + p.baseR + Math.random() * 4
+    p.x = this.width / 2 + (Math.random() - 0.5) * SPAWN_JITTER
+    p.y = this.height / 2 + (Math.random() - 0.5) * SPAWN_JITTER
     const angle = Math.random() * Math.PI * 2
     const speed = IDLE_SPEED * (2 + Math.random() * 3)
     p.vx = Math.cos(angle) * speed
@@ -250,7 +255,7 @@ export class ParticleSystem {
       voice.targetModeM = pattern.m + octaveDetail
       voice.targetModeN = pattern.n + octaveDetail
       voice.targetWeight = peak.magnitude
-      voice.targetHue = 20 + peak.freqRatio * 240
+      voice.targetHue = this.hueBase + peak.freqRatio * 240
       voice.noteLabel = note.label
     }
   }
@@ -437,7 +442,8 @@ export class ParticleSystem {
     ctx.clearRect(0, 0, this.width, this.height)
     if (this.alpha < 0.003 && this.leavingParticles.length === 0) return
 
-    const activeColor = soundActive ? `${this.hue}, 80%, 58%` : '250, 25%, 55%'
+    const idleHue = (this.hueBase + 230) % 360
+    const activeColor = soundActive ? `${this.hue}, 80%, 58%` : `${idleHue}, 25%, 55%`
     for (const p of this.activeParticles) {
       const a = this.alpha
       if (a < 0.003) continue

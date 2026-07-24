@@ -6,6 +6,23 @@ const DEFAULT_SENSITIVITY = 3.5
 const DEFAULT_SPEED = 0.55
 const DEFAULT_GLOW_COLOR = '#aa3bff'
 const DEFAULT_GLOW_INTENSITY = 0.85
+const DEFAULT_PARTICLE_COLOR = '#ff5500' // hue 20, matches the previous fixed base hue
+
+function hexToHue(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  if (d === 0) return 0
+  let h
+  if (max === r) h = ((g - b) / d) % 6
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  h *= 60
+  return h < 0 ? h + 360 : h
+}
 
 export default function ParticleField() {
   const canvasRef = useRef(null)
@@ -21,6 +38,7 @@ export default function ParticleField() {
   const [speed, setSpeed] = useState(DEFAULT_SPEED)
   const [glowColor, setGlowColor] = useState(DEFAULT_GLOW_COLOR)
   const [glowIntensity, setGlowIntensity] = useState(DEFAULT_GLOW_INTENSITY)
+  const [particleColor, setParticleColor] = useState(DEFAULT_PARTICLE_COLOR)
   const glowIntensityRef = useRef(glowIntensity)
   glowIntensityRef.current = glowIntensity
 
@@ -31,6 +49,10 @@ export default function ParticleField() {
   useEffect(() => {
     systemRef.current?.setSpeedScale(speed)
   }, [speed])
+
+  useEffect(() => {
+    systemRef.current?.setHueBase(hexToHue(particleColor))
+  }, [particleColor])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -53,6 +75,7 @@ export default function ParticleField() {
       if (!systemRef.current) {
         systemRef.current = new ParticleSystem(width, height, MAX_PARTICLES)
         systemRef.current.setSpeedScale(speed)
+        systemRef.current.setHueBase(hexToHue(particleColor))
       } else {
         systemRef.current.resize(width, height)
       }
@@ -155,6 +178,15 @@ export default function ParticleField() {
             step="0.05"
             value={speed}
             onChange={(e) => setSpeed(Number(e.target.value))}
+          />
+        </label>
+
+        <label className="sensitivity">
+          Color de las partículas
+          <input
+            type="color"
+            value={particleColor}
+            onChange={(e) => setParticleColor(e.target.value)}
           />
         </label>
 
