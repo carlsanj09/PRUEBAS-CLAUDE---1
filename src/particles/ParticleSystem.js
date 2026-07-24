@@ -49,9 +49,12 @@ const SPAWN_JITTER = 4
 const EXIT_FADE_SECONDS = 0.9
 
 // A faint ambient pull, so a subset of particles' organic drift leans
-// toward the right edge of the screen rather than staying perfectly random.
+// toward the top edge of the screen rather than staying perfectly random.
+// Strength is user-adjustable (see setGravityIntensity); this constant is
+// just the per-unit-intensity base amount.
 const GRAVITY_STRENGTH = 0.0045
 const GRAVITY_CHANCE = 0.5 // only "some" particles feel it, not all
+const DEFAULT_GRAVITY_INTENSITY = 1
 
 // Five qualitatively different plate figures (not just parameter variants of
 // one formula) so different notes can look structurally distinct, matching
@@ -114,6 +117,7 @@ export class ParticleSystem {
     this.hueBase = 20 // user-adjustable; the reactive palette shifts around this
     this.sizeScale = 1
     this.speedScale = DEFAULT_SPEED_SCALE
+    this.gravityIntensity = DEFAULT_GRAVITY_INTENSITY
 
     this.activeCount = maxCount
     this.targetCount = maxCount
@@ -142,6 +146,10 @@ export class ParticleSystem {
 
   setHueBase(hue) {
     this.hueBase = hue
+  }
+
+  setGravityIntensity(intensity) {
+    this.gravityIntensity = intensity
   }
 
   // Pulled from the pool when the count target rises: always starts from
@@ -219,7 +227,7 @@ export class ParticleSystem {
       const r = p.baseR * this.sizeScale
       p.vx *= DRAG
       p.vy *= DRAG
-      if (p.gravity > 0) p.vx += GRAVITY_STRENGTH * p.gravity
+      if (p.gravity > 0) p.vy -= GRAVITY_STRENGTH * this.gravityIntensity * p.gravity
       p.x += p.vx * this.speedScale
       p.y += p.vy * this.speedScale
 
@@ -343,16 +351,21 @@ export class ParticleSystem {
     const eps = 0.01
 
     for (const p of this.activeParticles) {
-      const nx = (p.x - halfW) / halfW
-      const ny = (p.y - halfH) / halfH
+      // The field's own axes are rotated 90° from the canvas's so the
+      // figure reads as oriented toward the top edge (its long axis running
+      // top-to-bottom) rather than the plain left-right layout.
+      const nx = -(p.y - halfH) / halfH
+      const ny = (p.x - halfW) / halfW
 
       const z = this.#plateFieldAt(nx, ny)
       const gx = (this.#plateFieldAt(nx + eps, ny) - z) / eps
       const gy = (this.#plateFieldAt(nx, ny + eps) - z) / eps
 
-      // Pulls toward decreasing |z| (a nodal line), scaled to pixel space.
-      p.vx += -SETTLE_STRENGTH * z * gx * scale
-      p.vy += -SETTLE_STRENGTH * z * gy * scale
+      // Pulls toward decreasing |z| (a nodal line). Forces are swapped back
+      // through the same rotation (chain rule) so they push in the correct
+      // actual pixel direction rather than the field's own rotated axes.
+      p.vx += -SETTLE_STRENGTH * z * gy * scale
+      p.vy += SETTLE_STRENGTH * z * gx * scale
 
       // Shakes particles sitting on high-amplitude (antinode) zones, same as
       // real sand won't settle where the plate is still vibrating hard. The

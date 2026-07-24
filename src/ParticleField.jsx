@@ -7,6 +7,7 @@ const DEFAULT_SPEED = 0.55
 const DEFAULT_GLOW_COLOR = '#aa3bff'
 const DEFAULT_GLOW_INTENSITY = 0.85
 const DEFAULT_PARTICLE_COLOR = '#ff5500' // hue 20, matches the previous fixed base hue
+const DEFAULT_GRAVITY_INTENSITY = 1
 
 function hexToHue(hex) {
   const r = parseInt(hex.slice(1, 3), 16) / 255
@@ -39,6 +40,7 @@ export default function ParticleField() {
   const [glowColor, setGlowColor] = useState(DEFAULT_GLOW_COLOR)
   const [glowIntensity, setGlowIntensity] = useState(DEFAULT_GLOW_INTENSITY)
   const [particleColor, setParticleColor] = useState(DEFAULT_PARTICLE_COLOR)
+  const [gravityIntensity, setGravityIntensity] = useState(DEFAULT_GRAVITY_INTENSITY)
   const glowIntensityRef = useRef(glowIntensity)
   glowIntensityRef.current = glowIntensity
 
@@ -53,6 +55,10 @@ export default function ParticleField() {
   useEffect(() => {
     systemRef.current?.setHueBase(hexToHue(particleColor))
   }, [particleColor])
+
+  useEffect(() => {
+    systemRef.current?.setGravityIntensity(gravityIntensity)
+  }, [gravityIntensity])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -76,6 +82,7 @@ export default function ParticleField() {
         systemRef.current = new ParticleSystem(width, height, MAX_PARTICLES)
         systemRef.current.setSpeedScale(speed)
         systemRef.current.setHueBase(hexToHue(particleColor))
+        systemRef.current.setGravityIntensity(gravityIntensity)
       } else {
         systemRef.current.resize(width, height)
       }
@@ -208,6 +215,18 @@ export default function ParticleField() {
             step="0.05"
             value={glowIntensity}
             onChange={(e) => setGlowIntensity(Number(e.target.value))}
+          />
+        </label>
+
+        <label className="sensitivity">
+          Intensidad de gravedad
+          <input
+            type="range"
+            min="0"
+            max="4"
+            step="0.1"
+            value={gravityIntensity}
+            onChange={(e) => setGravityIntensity(Number(e.target.value))}
           />
         </label>
 
