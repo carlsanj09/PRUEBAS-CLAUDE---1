@@ -1,0 +1,96 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  min-height: 100svh;
+  box-sizing: border-box;
+}
+
+.app h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--text-h);
+  text-align: center;
+}
+
+.stage {
+  width: 100%;
+  max-width: 1100px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hud button:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.meter {
+  width: 140px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 60ms linear;
+}
+
+.status {
+  font-size: 0.95rem;
+  color: var(--text);
+  min-width: 160px;
+}
+
+.status.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  opacity: 0.8;
+  flex-basis: 100%;
+}
+
+.canvas-wrap {
+  flex: 1;
+  min-height: 420px;
+  border: 2px solid var(--accent-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--code-bg);
+}
+
+.canvas-wrap canvas {
+  display: block;
+}
