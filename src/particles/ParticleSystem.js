@@ -48,6 +48,15 @@ const DEFAULT_SPEED_SCALE = 0.55 // overall visual speed multiplier, user-adjust
 const SPAWN_JITTER = 4
 const EXIT_FADE_SECONDS = 0.9
 
+// A faint ambient pull, so a subset of particles' organic drift leans
+// toward the composition's dominant side rather than staying perfectly
+// random. This is captured landscape but shown rotated 90deg clockwise
+// (OBS) for a vertical screen, so "the right side" in the final view is
+// this canvas's top edge — same convention as the glow and the plate
+// field's own orientation.
+const GRAVITY_STRENGTH = 0.0045
+const GRAVITY_CHANCE = 0.5 // only "some" particles feel it, not all
+
 // Five qualitatively different plate figures (not just parameter variants of
 // one formula) so different notes can look structurally distinct, matching
 // the varied families in the Chladni reference (crosses, mesh, mandalas,
@@ -127,6 +136,7 @@ export class ParticleSystem {
       jy: 0,
       leaveT: 0,
       fade: 1,
+      gravity: Math.random() < GRAVITY_CHANCE ? Math.random() : 0,
     }
   }
 
@@ -213,6 +223,7 @@ export class ParticleSystem {
       const r = p.baseR * this.sizeScale
       p.vx *= DRAG
       p.vy *= DRAG
+      if (p.gravity > 0) p.vy -= GRAVITY_STRENGTH * p.gravity
       p.x += p.vx * this.speedScale
       p.y += p.vy * this.speedScale
 
