@@ -137,6 +137,9 @@ export class ParticleSystem {
       leaveT: 0,
       fade: 1,
       gravity: Math.random() < GRAVITY_CHANCE ? Math.random() : 0,
+      // Persistent per-slot trait (not reset on respawn) used by the
+      // alternate render styles for a simple depth/perspective effect.
+      depth: Math.random(),
     }
   }
 
