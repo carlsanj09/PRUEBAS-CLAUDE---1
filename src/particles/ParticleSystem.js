@@ -16,16 +16,20 @@ const ALPHA_SMOOTH = 0.02 // fade in/out with sound, all the way to invisible in
 // Particle count follows the dominant frequency directly (not the note
 // table): flat at half below a low guitar E, ramping to the "1000" reference
 // at G3 (the 5th degree, SOL), then continuing to grow — with shrinking
-// particle size to compensate — up to a guitar's high E.
+// particle size to compensate — up to a guitar's high E. Past that top
+// frequency, particles keep appearing (rather than capping there) for one
+// more octave, up to double the previous ceiling.
 const COUNT_LOW_HZ = 80
 const COUNT_LOW_N = 500
 const COUNT_MID_HZ = 196.0 // SOL3 / G3
 const COUNT_MID_N = 1000
-const COUNT_HIGH_HZ = 329.63 // MI4 / E4
+const COUNT_HIGH_HZ = 329.63 // MI4 / E4 — the reference "top" frequency
 const COUNT_HIGH_N = 1800
+const COUNT_MAX_HZ = COUNT_HIGH_HZ * 2 // one octave above the top frequency
+const COUNT_MAX_N = COUNT_HIGH_N * 2 // double the previous ceiling
 const COUNT_SMOOTH = 0.01 // slow ramp, so the count drifts rather than pops
 
-export const MAX_PARTICLES = COUNT_HIGH_N
+export const MAX_PARTICLES = COUNT_MAX_N
 const MIN_PARTICLES = COUNT_LOW_N
 const VOICE_COUNT = 3 // mix up to 3 simultaneous tones into one figure
 
@@ -78,8 +82,14 @@ function countForHz(hz) {
     const t = (Math.log2(hz) - Math.log2(COUNT_LOW_HZ)) / (Math.log2(COUNT_MID_HZ) - Math.log2(COUNT_LOW_HZ))
     return COUNT_LOW_N + t * (COUNT_MID_N - COUNT_LOW_N)
   }
-  const t = Math.min(1, (Math.log2(hz) - Math.log2(COUNT_MID_HZ)) / (Math.log2(COUNT_HIGH_HZ) - Math.log2(COUNT_MID_HZ)))
-  return COUNT_MID_N + t * (COUNT_HIGH_N - COUNT_MID_N)
+  if (hz <= COUNT_HIGH_HZ) {
+    const t = (Math.log2(hz) - Math.log2(COUNT_MID_HZ)) / (Math.log2(COUNT_HIGH_HZ) - Math.log2(COUNT_MID_HZ))
+    return COUNT_MID_N + t * (COUNT_HIGH_N - COUNT_MID_N)
+  }
+  // Past the reference top frequency, particles keep appearing for one more
+  // octave instead of capping here, up to double the previous ceiling.
+  const t = Math.min(1, (Math.log2(hz) - Math.log2(COUNT_HIGH_HZ)) / (Math.log2(COUNT_MAX_HZ) - Math.log2(COUNT_HIGH_HZ)))
+  return COUNT_HIGH_N + t * (COUNT_MAX_N - COUNT_HIGH_N)
 }
 
 export class ParticleSystem {
@@ -136,9 +146,6 @@ export class ParticleSystem {
       leaveT: 0,
       fade: 1,
       gravity: Math.random() < GRAVITY_CHANCE ? Math.random() : 0,
-      // Persistent per-slot trait (not reset on respawn) used by the
-      // alternate render styles for a simple depth/perspective effect.
-      depth: Math.random(),
     }
   }
 

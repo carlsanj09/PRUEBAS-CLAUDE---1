@@ -1,14 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ParticleSystem, MAX_PARTICLES } from './particles/ParticleSystem'
 import { MicVolumeMeter } from './audio/MicVolumeMeter'
-import { RENDER_STYLES } from './particles/renderers'
-
-const STYLE_OPTIONS = [
-  { value: 'dots', label: 'Partículas' },
-  { value: 'threads', label: 'Hilos enredados' },
-  { value: 'smoke', label: 'Humo' },
-  { value: 'wave', label: 'Onda circular' },
-]
 
 const DEFAULT_SENSITIVITY = 3.5
 const DEFAULT_SPEED = 0.55
@@ -49,11 +41,8 @@ export default function ParticleField() {
   const [glowIntensity, setGlowIntensity] = useState(DEFAULT_GLOW_INTENSITY)
   const [particleColor, setParticleColor] = useState(DEFAULT_PARTICLE_COLOR)
   const [gravityIntensity, setGravityIntensity] = useState(DEFAULT_GRAVITY_INTENSITY)
-  const [style, setStyle] = useState('dots')
   const glowIntensityRef = useRef(glowIntensity)
   glowIntensityRef.current = glowIntensity
-  const styleRef = useRef(style)
-  styleRef.current = style
 
   useEffect(() => {
     meterRef.current?.setSensitivity(sensitivity)
@@ -106,9 +95,7 @@ export default function ParticleField() {
       const volume = meterRef.current ? meterRef.current.getVolume() : 0
       const peaks = meterRef.current ? meterRef.current.getSpectralPeaks(3) : []
       const { soundActive, activeCount } = systemRef.current.step(volume, peaks)
-      const renderer = RENDER_STYLES[styleRef.current]
-      if (renderer) renderer(ctx, systemRef.current, soundActive)
-      else systemRef.current.draw(ctx, soundActive)
+      systemRef.current.draw(ctx, soundActive)
 
       if (meterFillRef.current) {
         meterFillRef.current.style.width = `${Math.min(volume * 220, 100)}%`
@@ -176,17 +163,6 @@ export default function ParticleField() {
 
         <span ref={statusRef} className="status" />
         <span ref={countRef} className="count">1000 partículas</span>
-
-        <label className="sensitivity">
-          Estilo
-          <select value={style} onChange={(e) => setStyle(e.target.value)}>
-            {STYLE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
 
         <label className="sensitivity">
           Sensibilidad

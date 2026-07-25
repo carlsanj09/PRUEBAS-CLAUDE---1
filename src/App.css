@@ -137,14 +137,3 @@
   background: none;
   cursor: pointer;
 }
-
-.sensitivity select {
-  font: inherit;
-  font-size: 0.8rem;
-  color: var(--text-h);
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 6px;
-  cursor: pointer;
-}
