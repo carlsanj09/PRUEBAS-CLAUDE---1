@@ -34,8 +34,8 @@ const WEIGHT_SMOOTH = 0.02 // how fast a voice fades in/out as tones come and go
 const HUE_SMOOTH = 0.02
 const ORIENTATION_DRIFT = 0.0016 // constant slow plate rotation per voice
 
-const SETTLE_STRENGTH = 0.0016 // pull toward nodal lines
-const AGITATION_STRENGTH = 5 // shake proportional to local vibration * volume
+const SETTLE_STRENGTH = 0.0026 // pull toward nodal lines — tighter lock-in so the figure reads crisply in every render style
+const AGITATION_STRENGTH = 3.5 // shake proportional to local vibration * volume — trimmed so it perturbs without pulling grains off the line
 const AGITATION_SMOOTH = 0.06 // low-pass on the shake so it wanders instead of flickering (organic, not noisy)
 const REPEL_STRENGTH = 0.6 // keeps grains from perfectly overlapping
 const DRAG = 0.97
@@ -48,12 +48,11 @@ const DEFAULT_SPEED_SCALE = 0.55 // overall visual speed multiplier, user-adjust
 const SPAWN_JITTER = 4
 const EXIT_FADE_SECONDS = 0.9
 
-// A faint ambient pull, so a subset of particles' organic drift leans
-// toward the top edge of the screen rather than staying perfectly random.
-// Strength is user-adjustable (see setGravityIntensity); this constant is
-// just the per-unit-intensity base amount.
-const GRAVITY_STRENGTH = 0.0045
-const GRAVITY_CHANCE = 0.5 // only "some" particles feel it, not all
+// An ambient pull so a subset of particles' organic drift leans toward the
+// top edge of the screen rather than staying perfectly random. Strength is
+// user-adjustable on top of this (see setGravityIntensity).
+const GRAVITY_STRENGTH = 0.013
+const GRAVITY_CHANCE = 0.65 // most, but not all, particles feel it
 const DEFAULT_GRAVITY_INTENSITY = 1
 
 // Five qualitatively different plate figures (not just parameter variants of

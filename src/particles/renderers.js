@@ -3,8 +3,12 @@
 // reuses system.activeParticles / leavingParticles / hue / alpha as-is, so
 // they all form the same Chladni-driven figures — only the brushwork differs.
 
-const THREAD_TRAIL_POINTS = 60 // positions kept per thread (x,y pairs)
-const THREAD_STRIDE = 3 // draw every Nth particle — long threads read better sparse
+// Trail history is a trade-off: longer reads as a more dramatic thread, but
+// older points reflect where the (slowly evolving) pattern *was*, not where
+// it is now — kept short enough that the trail stays visually locked onto
+// the current nodal line instead of smearing across the figure.
+const THREAD_TRAIL_POINTS = 26
+const THREAD_STRIDE = 2 // draw every Nth particle — denser coverage traces the figure more faithfully
 const SMOKE_STRIDE = 2
 
 function colorFor(system, soundActive) {
@@ -74,9 +78,12 @@ export function drawSmoke(ctx, system, soundActive) {
   ctx.globalCompositeOperation = 'lighter'
   for (let i = 0; i < particles.length; i += SMOKE_STRIDE) {
     const p = particles[i]
-    const a = system.alpha * (0.05 + p.depth * 0.13)
+    const a = system.alpha * (0.09 + p.depth * 0.17)
     if (a < 0.003) continue
-    const size = p.baseR * system.sizeScale * (5 + p.depth * 9)
+    // Smaller puffs than before — big soft clouds were blurring the nodal
+    // lines into a generic haze; tighter puffs let the actual figure the
+    // particles have settled into read through the smoke.
+    const size = p.baseR * system.sizeScale * (2.6 + p.depth * 3.4)
     const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size)
     grad.addColorStop(0, `hsla(${color}, ${a})`)
     grad.addColorStop(1, `hsla(${color}, 0)`)
@@ -90,7 +97,7 @@ export function drawSmoke(ctx, system, soundActive) {
   drawLeavingAsDots(ctx, system, color)
 }
 
-const WAVE_SAMPLES = 96
+const WAVE_SAMPLES = 180 // finer angular resolution captures more of the swarm's actual shape
 const WAVE_LAYERS = 3
 
 // A deformed ring instead of discrete grains: the particle swarm's average
@@ -131,11 +138,17 @@ export function drawWave(ctx, system, soundActive) {
   for (let i = 0; i < WAVE_SAMPLES; i++) {
     if (Number.isNaN(radii[i])) radii[i] = baseRadius
   }
-  const smoothed = radii.map((_, i) => {
-    const prev = radii[(i - 1 + WAVE_SAMPLES) % WAVE_SAMPLES]
-    const next = radii[(i + 1) % WAVE_SAMPLES]
-    return (prev + radii[i] * 2 + next) / 4
-  })
+  // Two light passes (rather than one wider kernel) knock down the jagged
+  // bin-to-bin noise from the finer angular resolution while still tracking
+  // the swarm's actual outline instead of over-smoothing it into a blob.
+  let smoothed = radii
+  for (let pass = 0; pass < 2; pass++) {
+    smoothed = smoothed.map((_, i) => {
+      const prev = smoothed[(i - 1 + WAVE_SAMPLES) % WAVE_SAMPLES]
+      const next = smoothed[(i + 1) % WAVE_SAMPLES]
+      return (prev + smoothed[i] * 2 + next) / 4
+    })
+  }
 
   const squash = 0.82 // flattens the ring slightly for a tilted, perspective feel
   for (let layer = 0; layer < WAVE_LAYERS; layer++) {
