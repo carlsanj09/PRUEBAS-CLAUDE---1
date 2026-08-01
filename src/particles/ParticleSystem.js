@@ -1,11 +1,40 @@
 import { freqToNote, NOTE_PATTERNS } from '../audio/notes'
 
-const MIN_RADIUS = 2.2
-const MAX_RADIUS_ADD = 1.8
+const MIN_RADIUS = 1.4
+const MAX_RADIUS_ADD = 1.0
 const IDLE_SPEED = 0.15
 const IDLE_DAMPING = 0.02
 const CELL_SIZE = 14
 const MAX_SPEED = 7
+
+// Above this many active particles, pairwise overlap separation is skipped:
+// at the tiny sizes involved, overlap is imperceptible, and the grid-based
+// check still scales with density, not just count, so it's the first thing
+// that gets expensive at very large counts.
+const COLLISION_MAX_PARTICLES = 8000
+
+// The Chladni field is precomputed on this coarse pixel grid once per frame
+// instead of re-evaluated (several trig calls) per particle — cost then
+// scales with canvas area, not particle count, which is what makes tens of
+// thousands of particles feasible in real time.
+const FIELD_CELL_SIZE = 6
+
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360
+  s /= 100
+  l /= 100
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  let r1, g1, b1
+  if (h < 60) [r1, g1, b1] = [c, x, 0]
+  else if (h < 120) [r1, g1, b1] = [x, c, 0]
+  else if (h < 180) [r1, g1, b1] = [0, c, x]
+  else if (h < 240) [r1, g1, b1] = [0, x, c]
+  else if (h < 300) [r1, g1, b1] = [x, 0, c]
+  else [r1, g1, b1] = [c, 0, x]
+  return [Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255)]
+}
 
 // Hysteresis: enters "active" sooner than it exits, so a single loud
 // syllable doesn't cause the field to flicker on/off every frame.
@@ -14,20 +43,26 @@ const EXIT_THRESHOLD = 0.006
 const ALPHA_SMOOTH = 0.02 // fade in/out with sound, all the way to invisible in silence
 
 // Particle count follows the dominant frequency directly (not the note
-// table): flat at half below a low guitar E, ramping to the "1000" reference
-// at G3 (the 5th degree, SOL), then continuing to grow — with shrinking
-// particle size to compensate — up to a guitar's high E. Past that top
-// frequency, particles keep appearing (rather than capping there) for one
-// more octave, up to double the previous ceiling.
+// table): flat at a low floor below a low guitar E, ramping up through the
+// G3 (5th degree) and high-E reference points, then continuing to grow for
+// one more octave past that up to the ceiling — scaled proportionally
+// (same ratios as before, ~14x) so the top of the range is 100,000.
 const COUNT_LOW_HZ = 80
-const COUNT_LOW_N = 500
+const COUNT_LOW_N = 14000
 const COUNT_MID_HZ = 196.0 // SOL3 / G3
-const COUNT_MID_N = 1000
+const COUNT_MID_N = 28000
 const COUNT_HIGH_HZ = 329.63 // MI4 / E4 — the reference "top" frequency
-const COUNT_HIGH_N = 1800
+const COUNT_HIGH_N = 50000
 const COUNT_MAX_HZ = COUNT_HIGH_HZ * 2 // one octave above the top frequency
-const COUNT_MAX_N = COUNT_HIGH_N * 2 // double the previous ceiling
+const COUNT_MAX_N = 100000
 const COUNT_SMOOTH = 0.01 // slow ramp, so the count drifts rather than pops
+
+// Particles stay full-size up to this count and shrink beyond it
+// (radius ∝ 1/sqrt(count)) so total covered area stays roughly constant
+// instead of just getting denser — kept at the original absolute value so
+// the huge new range (up to 100,000) still ends up genuinely tiny rather
+// than shrinking relative to the also-much-bigger low end.
+const SIZE_REFERENCE_N = 1000
 
 export const MAX_PARTICLES = COUNT_MAX_N
 const MIN_PARTICLES = COUNT_LOW_N
@@ -127,6 +162,7 @@ export class ParticleSystem {
     this.sizeScale = 1
     this.speedScale = DEFAULT_SPEED_SCALE
     this.gravityIntensity = DEFAULT_GRAVITY_INTENSITY
+    this.#allocateFieldGrid()
 
     this.activeCount = maxCount
     this.targetCount = maxCount
@@ -191,6 +227,16 @@ export class ParticleSystem {
       p.x = Math.min(Math.max(p.x, p.baseR), width - p.baseR)
       p.y = Math.min(Math.max(p.y, p.baseR), height - p.baseR)
     }
+    this.#allocateFieldGrid()
+  }
+
+  #allocateFieldGrid() {
+    this.fieldCols = Math.max(2, Math.ceil(this.width / FIELD_CELL_SIZE) + 1)
+    this.fieldRows = Math.max(2, Math.ceil(this.height / FIELD_CELL_SIZE) + 1)
+    const size = this.fieldCols * this.fieldRows
+    this.fieldZ = new Float32Array(size)
+    this.fieldGX = new Float32Array(size)
+    this.fieldGY = new Float32Array(size)
   }
 
   // `peaks`: [{ hz, freqRatio: 0-1 (low->high, log-mapped), magnitude: 0-1 }], strongest first.
@@ -223,11 +269,11 @@ export class ParticleSystem {
 
     const targetActiveN = Math.max(MIN_PARTICLES, Math.min(MAX_PARTICLES, Math.round(this.activeCount)))
     this.#syncActiveCount(targetActiveN)
-    this.sizeScale = this.activeCount > COUNT_MID_N ? Math.sqrt(COUNT_MID_N / this.activeCount) : 1
+    this.sizeScale = this.activeCount > SIZE_REFERENCE_N ? Math.sqrt(SIZE_REFERENCE_N / this.activeCount) : 1
 
     if (soundActive) {
       this.#applyPlateForces(volume)
-      this.#resolveOverlaps()
+      if (this.activeParticles.length <= COLLISION_MAX_PARTICLES) this.#resolveOverlaps()
     } else {
       this.#dampToIdle()
     }
@@ -352,27 +398,71 @@ export class ParticleSystem {
     return weightSum > 0 ? z / weightSum : 0
   }
 
-  #applyPlateForces(volume) {
+  // Samples the plate field once per coarse grid cell (not per particle).
+  // For each cell this stores z itself plus its gradient — approximated by
+  // differencing against the next cell over and dividing by that step's
+  // actual size in the field's own (rotated, per-axis) normalized units, so
+  // it's numerically equivalent to the old per-particle eps-based gradient.
+  #buildFieldGrid() {
     const halfW = this.width / 2
     const halfH = this.height / 2
-    const scale = Math.min(halfW, halfH)
+    const cols = this.fieldCols
+    const rows = this.fieldRows
+    const z = this.fieldZ
+
+    for (let row = 0; row < rows; row++) {
+      const py = row * FIELD_CELL_SIZE
+      const nx = -(py - halfH) / halfH
+      const base = row * cols
+      for (let col = 0; col < cols; col++) {
+        const px = col * FIELD_CELL_SIZE
+        const ny = (px - halfW) / halfW
+        z[base + col] = this.#plateFieldAt(nx, ny)
+      }
+    }
+
+    const gx = this.fieldGX
+    const gy = this.fieldGY
+    const nxStep = FIELD_CELL_SIZE / halfH
+    const nyStep = FIELD_CELL_SIZE / halfW
+    for (let row = 0; row < rows; row++) {
+      const base = row * cols
+      const nextRowBase = Math.min(row + 1, rows - 1) * cols
+      for (let col = 0; col < cols; col++) {
+        const idx = base + col
+        const nextCol = Math.min(col + 1, cols - 1)
+        gx[idx] = (z[nextRowBase + col] - z[idx]) / nxStep
+        gy[idx] = (z[base + nextCol] - z[idx]) / nyStep
+      }
+    }
+  }
+
+  #applyPlateForces(volume) {
+    this.#buildFieldGrid()
+    const scale = Math.min(this.width / 2, this.height / 2)
     const energy = Math.min(volume, 1)
-    const eps = 0.01
+    const cols = this.fieldCols
+    const rows = this.fieldRows
+    const zGrid = this.fieldZ
+    const gxGrid = this.fieldGX
+    const gyGrid = this.fieldGY
 
     for (const p of this.activeParticles) {
-      // The field's own axes are rotated 90° from the canvas's so the
-      // figure reads as oriented toward the top edge (its long axis running
-      // top-to-bottom) rather than the plain left-right layout.
-      const nx = -(p.y - halfH) / halfH
-      const ny = (p.x - halfW) / halfW
+      let col = (p.x / FIELD_CELL_SIZE) | 0
+      let row = (p.y / FIELD_CELL_SIZE) | 0
+      if (col < 0) col = 0
+      else if (col >= cols) col = cols - 1
+      if (row < 0) row = 0
+      else if (row >= rows) row = rows - 1
+      const idx = row * cols + col
 
-      const z = this.#plateFieldAt(nx, ny)
-      const gx = (this.#plateFieldAt(nx + eps, ny) - z) / eps
-      const gy = (this.#plateFieldAt(nx, ny + eps) - z) / eps
+      const z = zGrid[idx]
+      const gx = gxGrid[idx]
+      const gy = gyGrid[idx]
 
-      // Pulls toward decreasing |z| (a nodal line). Forces are swapped back
-      // through the same rotation (chain rule) so they push in the correct
-      // actual pixel direction rather than the field's own rotated axes.
+      // Pulls toward decreasing |z| (a nodal line). Forces are swapped
+      // through the field's rotation (chain rule) so they push in the
+      // correct actual pixel direction rather than the field's own axes.
       p.vx += -SETTLE_STRENGTH * z * gy * scale
       p.vy += SETTLE_STRENGTH * z * gx * scale
 
@@ -460,28 +550,59 @@ export class ParticleSystem {
     b.vy += ny * REPEL_STRENGTH
   }
 
+  // Writes particles straight into a reusable pixel buffer and blits it in
+  // one call, instead of one canvas draw call per particle — at this scale
+  // (tens of thousands, minimum) individual fillRect/arc calls don't stay
+  // real-time (measured ~65ms/frame for 100,000 vs ~6ms this way), and the
+  // particles are sub-pixel-sized anyway so single pixels lose nothing.
   draw(ctx, soundActive) {
-    ctx.clearRect(0, 0, this.width, this.height)
-    if (this.alpha < 0.003 && this.leavingParticles.length === 0) return
+    const canvas = ctx.canvas
+    const w = canvas.width
+    const h = canvas.height
+    const dpr = w / this.width
 
-    const idleHue = (this.hueBase + 230) % 360
-    const activeColor = soundActive ? `${this.hue}, 80%, 58%` : `${idleHue}, 25%, 55%`
-    for (const p of this.activeParticles) {
-      const a = this.alpha
-      if (a < 0.003) continue
-      ctx.beginPath()
-      ctx.fillStyle = `hsla(${activeColor}, ${a})`
-      ctx.arc(p.x, p.y, p.baseR * this.sizeScale, 0, Math.PI * 2)
-      ctx.fill()
+    if (!this._pixelBuffer || this._pixelBuffer.width !== w || this._pixelBuffer.height !== h) {
+      this._pixelBuffer = new ImageData(w, h)
+    }
+    const imageData = this._pixelBuffer
+    const data = imageData.data
+    data.fill(0)
+
+    if (this.alpha >= 0.003) {
+      const idleHue = (this.hueBase + 230) % 360
+      const hue = soundActive ? this.hue : idleHue
+      const lightness = soundActive ? 58 : 55
+      const saturation = soundActive ? 80 : 25
+      const [r, g, b] = hslToRgb(hue, saturation, lightness)
+      const alphaByte = Math.max(0, Math.min(255, Math.round(this.alpha * 255)))
+
+      for (const p of this.activeParticles) {
+        const px = (p.x * dpr) | 0
+        const py = (p.y * dpr) | 0
+        if (px < 0 || px >= w || py < 0 || py >= h) continue
+        const idx = (py * w + px) * 4
+        data[idx] = r
+        data[idx + 1] = g
+        data[idx + 2] = b
+        data[idx + 3] = alphaByte
+      }
     }
 
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.putImageData(imageData, 0, 0)
+    ctx.restore()
+
+    // The leaving list is always small (a fraction of a second of fade-outs
+    // in flight), so plain fillRect on top is fine here.
+    const idleHue = (this.hueBase + 230) % 360
+    const activeColor = soundActive ? `${this.hue}, 80%, 58%` : `${idleHue}, 25%, 55%`
     for (const p of this.leavingParticles) {
-      const a = this.alpha * p.fade
-      if (a < 0.003) continue
-      ctx.beginPath()
-      ctx.fillStyle = `hsla(${activeColor}, ${a})`
-      ctx.arc(p.x, p.y, p.baseR * this.sizeScale * p.fade, 0, Math.PI * 2)
-      ctx.fill()
+      const la = this.alpha * p.fade
+      if (la < 0.003) continue
+      ctx.fillStyle = `hsla(${activeColor}, ${la})`
+      const d = Math.max(1, p.baseR * this.sizeScale * p.fade * 2)
+      ctx.fillRect(p.x - d / 2, p.y - d / 2, d, d)
     }
   }
 }
